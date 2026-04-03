@@ -1,26 +1,193 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f2f2f7;
+  --foreground: #000000;
+  --secondary-bg: #ffffff;
+  --tertiary-bg: #f2f2f7;
+  --elevated: #ffffff;
+  --card: #ffffff;
+  --card-hover: #f5f5f7;
+  --border: rgba(60,60,67,0.12);
+  --separator: rgba(60,60,67,0.12);
+  --accent: #34c759;
+  --accent-hover: #28a745;
+  --blue: #007aff;
+  --muted: rgba(60,60,67,0.6);
+  --muted-2: rgba(60,60,67,0.3);
+  --danger: #ff3b30;
+  --warning: #ffcc00;
+  --orange: #ff9500;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-secondary-bg: var(--secondary-bg);
+  --color-tertiary-bg: var(--tertiary-bg);
+  --color-elevated: var(--elevated);
+  --color-card: var(--card);
+  --color-card-hover: var(--card-hover);
+  --color-border: var(--border);
+  --color-separator: var(--separator);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-ios-blue: var(--blue);
+  --color-muted: var(--muted);
+  --color-muted-2: var(--muted-2);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
+  --color-orange: var(--orange);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* ===== Base ===== */
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scroll-behavior: smooth;
+  overscroll-behavior: none;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', var(--font-sans, 'Helvetica Neue'), Arial, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Touch optimization */
+button, a, [role="button"] {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* Signature canvas */
+.signature-canvas {
+  touch-action: none;
+  cursor: crosshair;
+}
+
+/* ===== Scrollbar (light, minimal) ===== */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+/* ===== iOS Utility Classes ===== */
+
+.ios-blur {
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  background: rgba(255,255,255,0.85);
+}
+
+.ios-card {
+  background: var(--secondary-bg);
+  border-radius: 16px;
+  box-shadow: 0 0.5px 0 var(--border);
+}
+
+.ios-nav {
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  background: rgba(249,249,249,0.94);
+  border-bottom: 0.5px solid var(--separator);
+}
+
+.ios-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  font-weight: 600;
+  transition: transform 0.15s cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.ios-button:active {
+  transform: scale(0.97);
+  opacity: 0.85;
+}
+
+.ios-sheet {
+  background: var(--secondary-bg);
+  border-radius: 22px 22px 0 0;
+  box-shadow: 0 -2px 20px rgba(0,0,0,0.1);
+  animation: slide-up 0.4s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* ===== Animations (spring-based) ===== */
+
+@keyframes spring-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.03);
+  }
+  80% {
+    transform: scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes fade-up {
+  0% {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slide-up {
+  0% {
+    transform: translateY(100%);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+@keyframes scale-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes checkDraw {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
