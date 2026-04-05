@@ -1,9 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import Nav from '@/components/nav';
 import type { RouteWithDetails } from '@/types';
+
+const LiveMap = dynamic(() => import('@/components/live-map'), { ssr: false });
 
 const DRIVER_COLORS: Record<string, string> = {
   Erik: '#3b82f6',
@@ -290,6 +293,11 @@ export default function DashboardPage() {
                   </p>
                 </div>
               ))}
+            </div>
+
+            {/* Live Map */}
+            <div style={{ marginBottom: 36 }}>
+              <LiveMap />
             </div>
 
             {/* Driver Progress Section */}

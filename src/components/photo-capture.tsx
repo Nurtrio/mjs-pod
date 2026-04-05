@@ -36,7 +36,7 @@ export default function PhotoCapture({ onPhotoCapture, onRetake, previewUrl }: P
             src={previewUrl}
             alt="Delivery photo"
             className="h-auto w-full object-contain"
-            style={{ maxHeight: 500, background: '#000' }}
+            style={{ maxHeight: 560, background: '#000' }}
           />
         </div>
         <button
@@ -88,11 +88,11 @@ export default function PhotoCapture({ onPhotoCapture, onRetake, previewUrl }: P
         className="ios-button w-full"
         style={{
           flexDirection: 'column',
-          gap: 16,
-          borderRadius: 16,
+          gap: 20,
+          borderRadius: 20,
           background: 'var(--secondary-bg)',
           border: '0.5px solid var(--border)',
-          padding: '48px 24px',
+          padding: '64px 32px',
           cursor: 'pointer',
           transition: 'transform 0.15s cubic-bezier(0.25,0.46,0.45,0.94), background 0.15s ease',
         }}
@@ -100,8 +100,8 @@ export default function PhotoCapture({ onPhotoCapture, onRetake, previewUrl }: P
         {/* iOS Camera-style circle button */}
         <div
           style={{
-            width: 72,
-            height: 72,
+            width: 88,
+            height: 88,
             borderRadius: '50%',
             background: 'var(--tertiary-bg)',
             border: '2px solid var(--muted-2)',
@@ -116,7 +116,7 @@ export default function PhotoCapture({ onPhotoCapture, onRetake, previewUrl }: P
             viewBox="0 0 24 24"
             strokeWidth={1.5}
             stroke="var(--muted)"
-            style={{ width: 32, height: 32 }}
+            style={{ width: 40, height: 40 }}
           >
             <path
               strokeLinecap="round"
@@ -130,7 +130,7 @@ export default function PhotoCapture({ onPhotoCapture, onRetake, previewUrl }: P
             />
           </svg>
         </div>
-        <span style={{ fontSize: 17, fontWeight: 600, color: 'var(--foreground)', letterSpacing: '-0.01em' }}>
+        <span style={{ fontSize: 20, fontWeight: 600, color: 'var(--foreground)', letterSpacing: '-0.01em' }}>
           Take Photo
         </span>
       </button>

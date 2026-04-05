@@ -136,7 +136,12 @@ export async function POST(request: NextRequest) {
     // Google Drive not configured or upload failed — continue without it
   }
 
-  // i. Update route_stop record
+  // i. Update route_stop record with dwell time calculation
+  let dwellSeconds: number | null = null;
+  if (stop.arrived_at) {
+    dwellSeconds = Math.round((new Date(now).getTime() - new Date(stop.arrived_at).getTime()) / 1000);
+  }
+
   const { error: stopUpdateError } = await supabase
     .from('route_stops')
     .update({
@@ -146,6 +151,10 @@ export async function POST(request: NextRequest) {
       google_drive_file_id: googleDriveFileId,
       status: 'completed',
       completed_at: now,
+      departed_at: now,
+      dwell_seconds: dwellSeconds,
+      gps_lat: gpsLat ? parseFloat(gpsLat) : null,
+      gps_lng: gpsLng ? parseFloat(gpsLng) : null,
     })
     .eq('id', stopId);
 

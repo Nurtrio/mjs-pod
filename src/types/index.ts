@@ -38,6 +38,9 @@ export interface RouteStop {
   pod_pdf_storage_path: string | null;
   google_drive_file_id: string | null;
   completed_at: string | null;
+  arrived_at: string | null;
+  departed_at: string | null;
+  dwell_seconds: number | null;
   gps_lat: number | null;
   gps_lng: number | null;
   notes: string | null;
@@ -47,4 +50,38 @@ export interface RouteStop {
 export interface RouteWithDetails extends Route {
   driver: Driver;
   stops: (RouteStop & { invoice: Invoice })[];
+}
+
+export interface DriverTerritory {
+  id: string;
+  driver_id: string;
+  territory_name: string;
+  description: string;
+  zip_codes: string[];
+  priority: number;
+  created_at: string;
+}
+
+export interface DriverLocation {
+  id: string;
+  driver_id: string;
+  lat: number;
+  lng: number;
+  heading: number | null;
+  speed: number | null;
+  accuracy: number | null;
+  recorded_at: string;
+}
+
+export interface TerritoryAssignment {
+  invoice_index: number;
+  driver_id: string;
+  driver_name: string;
+  confidence: 'high' | 'medium' | 'low';
+  reasoning: string;
+}
+
+export interface DispatchResult {
+  assignments: TerritoryAssignment[];
+  routes: RouteWithDetails[];
 }

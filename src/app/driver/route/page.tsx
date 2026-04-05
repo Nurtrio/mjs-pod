@@ -76,24 +76,24 @@ export default function DriverRoutePage() {
   const dateStr = today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 
   return (
-    <div className="min-h-[calc(100vh-56px)] bg-background">
+    <div className="min-h-[calc(100vh-72px)] bg-background">
       {/* Driver header card */}
-      <div className="px-5 pt-6 pb-2">
-        <div className="flex items-center gap-4 rounded-2xl bg-card p-5" style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}>
+      <div className="px-6 pt-7 pb-3">
+        <div className="flex items-center gap-5 rounded-2xl bg-card p-6" style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}>
           <div
-            className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-[22px] font-bold text-white"
+            className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full text-[24px] font-bold text-white"
             style={{ backgroundColor: driverColor }}
           >
             {driverInitial}
           </div>
           <div className="min-w-0 flex-1">
-            <h1 className="text-[24px] font-bold tracking-tight text-foreground">{driver.name}</h1>
-            <p className="text-[15px] text-muted">{dateStr}</p>
+            <h1 className="text-[26px] font-bold tracking-tight text-foreground">{driver.name}</h1>
+            <p className="text-[16px] text-muted">{dateStr}</p>
           </div>
           <button
             type="button"
             onClick={fetchRoute}
-            className="flex h-11 w-11 items-center justify-center rounded-full bg-background text-muted transition-all duration-150 active:scale-[0.9] active:bg-[#e5e5ea]"
+            className="flex h-12 w-12 items-center justify-center rounded-full bg-background text-muted transition-all duration-150 active:scale-[0.9] active:bg-[#e5e5ea]"
             style={{ WebkitTapHighlightColor: 'transparent' }}
             aria-label="Refresh route"
           >
@@ -104,7 +104,7 @@ export default function DriverRoutePage() {
         </div>
       </div>
 
-      <div className="px-5 py-4">
+      <div className="px-6 py-5">
         {/* Loading */}
         {loading && (
           <div className="flex items-center justify-center py-20">
@@ -142,16 +142,16 @@ export default function DriverRoutePage() {
         {!loading && !error && route && (
           <>
             {/* Progress bar */}
-            <div className="mb-5 rounded-2xl bg-card p-5" style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}>
+            <div className="mb-6 rounded-2xl bg-card p-6" style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}>
               <div className="mb-3 flex items-baseline justify-between">
-                <span className="text-[20px] font-bold text-foreground">
+                <span className="text-[22px] font-bold text-foreground">
                   {completedCount}/{totalCount}
                 </span>
-                <span className="text-[15px] font-medium text-muted">
+                <span className="text-[16px] font-medium text-muted">
                   {totalCount > 0 ? `${Math.round((completedCount / totalCount) * 100)}% complete` : 'No stops'}
                 </span>
               </div>
-              <div className="h-2.5 w-full overflow-hidden rounded-full bg-background">
+              <div className="h-3 w-full overflow-hidden rounded-full bg-background">
                 <div
                   className="h-full rounded-full bg-accent transition-all duration-700 ease-out"
                   style={{ width: totalCount > 0 ? `${(completedCount / totalCount) * 100}%` : '0%' }}
@@ -174,44 +174,45 @@ export default function DriverRoutePage() {
 
             {/* Pending stops */}
             {pendingStops.length > 0 && (
-              <div className="mb-5">
-                <p className="mb-3 px-1 text-[13px] font-semibold uppercase tracking-wider text-muted">
+              <div className="mb-6">
+                <p className="mb-4 px-1 text-[14px] font-semibold uppercase tracking-wider text-muted">
                   Up Next
                 </p>
-                <div className="space-y-3">
+                <div className="space-y-4">
                   {pendingStops.map((stop, idx) => (
                     <button
                       key={stop.id}
                       onClick={() => router.push(`/driver/deliver/${stop.id}`)}
-                      className="flex w-full items-center gap-4 rounded-2xl bg-card p-5 text-left transition-all duration-150 active:scale-[0.98] active:bg-card-hover"
+                      className="flex w-full items-center gap-5 rounded-2xl bg-card p-6 text-left transition-all duration-150 active:scale-[0.98] active:bg-card-hover"
                       style={{
                         WebkitTapHighlightColor: 'transparent',
+                        minHeight: 88,
                         boxShadow: idx === 0
                           ? '0 2px 12px rgba(52,199,89,0.12), 0 1px 4px rgba(0,0,0,0.04)'
                           : '0 1px 8px rgba(0,0,0,0.04)',
-                        border: idx === 0 ? '1.5px solid rgba(52,199,89,0.25)' : '1px solid transparent',
+                        border: idx === 0 ? '2px solid rgba(52,199,89,0.25)' : '1px solid transparent',
                       }}
                     >
                       {/* Stop number */}
                       <div
-                        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-[18px] font-bold text-white"
+                        className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-[20px] font-bold text-white"
                         style={{ backgroundColor: idx === 0 ? 'var(--accent)' : 'var(--blue)' }}
                       >
                         {stop.stop_order}
                       </div>
                       {/* Info */}
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-[18px] font-semibold text-foreground">
+                        <p className="truncate text-[20px] font-semibold text-foreground">
                           {stop.invoice?.customer_name || 'Unknown Customer'}
                         </p>
-                        <div className="mt-1 flex items-center gap-2">
-                          <span className="text-[14px] font-medium text-muted">
+                        <div className="mt-1.5 flex items-center gap-2">
+                          <span className="text-[15px] font-medium text-muted">
                             INV #{stop.invoice?.invoice_number || '—'}
                           </span>
                           {stop.invoice?.customer_address && (
                             <>
                               <span className="text-muted-2">·</span>
-                              <span className="truncate text-[14px] text-muted-2">
+                              <span className="truncate text-[15px] text-muted-2">
                                 {stop.invoice.customer_address}
                               </span>
                             </>
@@ -219,8 +220,8 @@ export default function DriverRoutePage() {
                         </div>
                       </div>
                       {/* Arrow */}
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-background">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="h-4 w-4 text-muted">
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-background">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="h-5 w-5 text-muted">
                           <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
                         </svg>
                       </div>
@@ -232,34 +233,34 @@ export default function DriverRoutePage() {
 
             {/* Completed stops */}
             {completedStops.length > 0 && (
-              <div className="mb-5">
-                <p className="mb-3 px-1 text-[13px] font-semibold uppercase tracking-wider text-muted">
+              <div className="mb-6">
+                <p className="mb-4 px-1 text-[14px] font-semibold uppercase tracking-wider text-muted">
                   Completed
                 </p>
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {completedStops.map((stop) => (
                     <div
                       key={stop.id}
-                      className="flex w-full items-center gap-4 rounded-2xl bg-card/60 p-4"
+                      className="flex w-full items-center gap-5 rounded-2xl bg-card/60 p-5"
                       style={{ boxShadow: '0 0.5px 4px rgba(0,0,0,0.03)' }}
                     >
                       {/* Checkmark */}
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/12">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="h-5 w-5 text-accent">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-accent/12">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="h-6 w-6 text-accent">
                           <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
                         </svg>
                       </div>
                       {/* Info */}
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-[16px] font-semibold text-foreground/60">
+                        <p className="truncate text-[18px] font-semibold text-foreground/60">
                           {stop.invoice?.customer_name || 'Unknown Customer'}
                         </p>
-                        <p className="text-[13px] text-muted-2">
+                        <p className="text-[14px] text-muted-2">
                           INV #{stop.invoice?.invoice_number || '—'}
                         </p>
                       </div>
                       {/* Badge */}
-                      <span className="shrink-0 rounded-full bg-accent/10 px-3 py-1.5 text-[12px] font-bold uppercase tracking-wide text-accent">
+                      <span className="shrink-0 rounded-full bg-accent/10 px-4 py-2 text-[13px] font-bold uppercase tracking-wide text-accent">
                         Done
                       </span>
                     </div>
@@ -271,11 +272,11 @@ export default function DriverRoutePage() {
         )}
 
         {/* Log out button */}
-        <div className="mt-10 pb-8">
+        <div className="mt-12 pb-10">
           <button
             type="button"
             onClick={handleLogout}
-            className="w-full rounded-2xl bg-card py-4 text-center text-[17px] font-semibold text-danger transition-all duration-150 active:scale-[0.98] active:bg-card-hover"
+            className="w-full rounded-2xl bg-card py-5 text-center text-[18px] font-semibold text-danger transition-all duration-150 active:scale-[0.98] active:bg-card-hover"
             style={{ WebkitTapHighlightColor: 'transparent', boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}
           >
             Log Out

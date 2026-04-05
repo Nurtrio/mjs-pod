@@ -49,7 +49,7 @@ export default function SignaturePad({ onSignatureChange, width, height = 300 }:
     // Draw placeholder if no content
     if (!hasContent) {
       ctx.fillStyle = '#c7c7cc';
-      ctx.font = "300 20px -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif";
+      ctx.font = "300 24px -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif";
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('Sign here', canvasWidth / 2, height / 2);
@@ -105,7 +105,7 @@ export default function SignaturePad({ onSignatureChange, width, height = 300 }:
     if (points.length < 2) return;
 
     ctx.strokeStyle = '#1c1c1e';
-    ctx.lineWidth = 2.5;
+    ctx.lineWidth = 3;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
@@ -187,9 +187,9 @@ export default function SignaturePad({ onSignatureChange, width, height = 300 }:
         onClick={clear}
         className="ios-button"
         style={{
-          marginTop: 12,
-          padding: '8px 0',
-          fontSize: 17,
+          marginTop: 16,
+          padding: '10px 0',
+          fontSize: 18,
           fontWeight: 400,
           color: 'var(--blue)',
           background: 'transparent',
