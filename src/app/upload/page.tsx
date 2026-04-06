@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Nav from '@/components/nav';
 import type { TerritoryAssignment } from '@/types';
 
@@ -50,6 +50,16 @@ export default function UploadPage() {
   const [dispatched, setDispatched] = useState(false);
   const [dispatchRoutes, setDispatchRoutes] = useState<{ driver_name: string; stop_count: number; stops: { customer_name: string; invoice_number: string; address: string }[] }[]>([]);
   const [expandedDriver, setExpandedDriver] = useState<string | null>(null);
+  const [drivers, setDrivers] = useState<{ id: string; name: string }[]>([]);
+  const [showRouteBuilder, setShowRouteBuilder] = useState(false);
+
+  // Fetch drivers on mount
+  useEffect(() => {
+    fetch('/api/drivers')
+      .then((r) => r.json())
+      .then((data) => { if (Array.isArray(data)) setDrivers(data); })
+      .catch(() => {});
+  }, []);
 
   const extractWithClaude = useCallback(async (file: File, startIndex: number) => {
     const formData = new FormData();
@@ -166,7 +176,10 @@ export default function UploadPage() {
     setUploading(false);
 
     if (mode === 'upload') {
-      if (updated.every((f) => f.uploaded)) setAllDone(true);
+      if (updated.every((f) => f.uploaded)) {
+        setAllDone(true);
+        setShowRouteBuilder(true);
+      }
       return;
     }
 
@@ -219,22 +232,41 @@ export default function UploadPage() {
     }
   };
 
-  // Dispatch: Create optimized routes for each driver
+  // Dispatch: Create optimized routes for each driver (only assigned invoices)
   const dispatchAll = async () => {
     setDispatching(true);
     try {
-      const uploadedIds = files
-        .filter((f) => f.uploaded && f.uploadedId)
-        .map((f) => f.uploadedId!);
+      // Only dispatch invoices assigned to a driver
+      const assignedFiles = files.filter((f) => f.uploaded && f.uploadedId && f.assignedDriverName);
+      const assignedIds = assignedFiles.map((f) => f.uploadedId!);
+
+      if (assignedIds.length === 0) {
+        setDispatching(false);
+        return;
+      }
 
       const res = await fetch('/api/dispatch/auto', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ invoice_ids: uploadedIds }),
+        body: JSON.stringify({ invoice_ids: assignedIds }),
       });
 
       if (!res.ok) throw new Error('Dispatch failed');
       const data = await res.json();
+
+      // Clean up unassigned invoices from DB
+      const unassignedIds = files
+        .filter((f) => f.uploaded && f.uploadedId && !f.assignedDriverName)
+        .map((f) => f.uploadedId!);
+      if (unassignedIds.length > 0) {
+        try {
+          await fetch('/api/invoices/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ invoice_ids: unassignedIds }),
+          });
+        } catch { /* best effort */ }
+      }
 
       const routeSummary = (data.routes || [])
         .filter((r: Record<string, unknown>) => r && !r.error)
@@ -250,6 +282,8 @@ export default function UploadPage() {
 
       setDispatchRoutes(routeSummary);
       setDispatched(true);
+      // Clear unassigned files from local state
+      setFiles((prev) => prev.filter((f) => f.assignedDriverName));
     } catch (e) {
       console.error('Dispatch error:', e);
     } finally {
@@ -265,15 +299,16 @@ export default function UploadPage() {
     setDragFileIdx(idx);
   };
 
-  const handleDropOnDriverCol = (driverName: string, driverId: string) => {
+  const handleDropOnDriverCol = (driverName: string) => {
     if (dragFileIdx === null) return;
     const isUnassigned = driverName === 'Unassigned';
+    const driver = drivers.find((d) => d.name === driverName);
     setFiles((prev) =>
       prev.map((f, i) => {
         if (i !== dragFileIdx) return f;
         return {
           ...f,
-          assignedDriverId: isUnassigned ? undefined : driverId,
+          assignedDriverId: isUnassigned ? undefined : (driver?.id || f.assignedDriverId),
           assignedDriverName: isUnassigned ? undefined : driverName,
           confidence: isUnassigned ? undefined : 'medium' as const,
           reasoning: isUnassigned ? undefined : 'Manually reassigned by dispatcher',
@@ -287,9 +322,14 @@ export default function UploadPage() {
   const anyExtracting = files.some((f) => f.extracting);
   const allUploaded = files.length > 0 && files.every((f) => f.uploaded);
 
-  // Group files by driver for dispatch preview — always include Unassigned
+  // Group files by driver for route builder — always include driver columns + Unassigned
   const driverGroups: Record<string, FileEntry[]> = {};
-  if (classified) {
+  const routeBuilderVisible = classified || showRouteBuilder;
+  if (routeBuilderVisible) {
+    // Always create columns for known drivers
+    for (const d of drivers) {
+      driverGroups[d.name] = [];
+    }
     driverGroups['Unassigned'] = [];
     for (const f of files) {
       const key = f.assignedDriverName || 'Unassigned';
@@ -322,7 +362,20 @@ export default function UploadPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             {files.length > 0 && (
               <button
-                onClick={() => { setFiles([]); setClassified(false); setDispatched(false); setAllDone(false); setDispatchRoutes([]); setExpandedDriver(null); }}
+                onClick={async () => {
+                  // Delete uploaded invoices and their routes from Supabase
+                  const uploadedIds = files.filter((f) => f.uploaded && f.uploadedId).map((f) => f.uploadedId!);
+                  if (uploadedIds.length > 0) {
+                    try {
+                      await fetch('/api/invoices/clear', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ invoice_ids: uploadedIds }),
+                      });
+                    } catch { /* best effort */ }
+                  }
+                  setFiles([]); setClassified(false); setDispatched(false); setAllDone(false); setDispatchRoutes([]); setExpandedDriver(null); setShowRouteBuilder(false);
+                }}
                 style={{
                   padding: '8px 18px', fontSize: 13, fontWeight: 600, borderRadius: 8,
                   border: 'none', cursor: 'pointer', fontFamily: 'inherit',
@@ -483,35 +536,27 @@ export default function UploadPage() {
           </div>
         )}
 
-        {/* Upload-only success banner */}
-        {allDone && mode === 'upload' && (
+        {/* Upload-only success hint */}
+        {allDone && mode === 'upload' && !dispatched && (
           <div
             style={{
               background: 'rgba(52,199,89,0.08)',
               borderRadius: 16,
-              padding: '16px 22px',
+              padding: '14px 22px',
               fontSize: 15,
               fontWeight: 600,
               color: '#34c759',
-              marginBottom: 24,
+              marginBottom: 20,
               display: 'flex',
               alignItems: 'center',
               gap: 12,
               boxShadow: '0 1px 8px rgba(0,0,0,0.04)',
             }}
           >
-            <div
-              style={{
-                width: 32, height: 32, borderRadius: 10,
-                background: 'rgba(52,199,89,0.15)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-              }}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#34c759" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                <path d="M20 6 9 17l-5-5" />
-              </svg>
-            </div>
-            All invoices uploaded successfully
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#34c759" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+            Uploaded — drag invoices to assign drivers, then Save Routes
           </div>
         )}
 
@@ -586,35 +631,36 @@ export default function UploadPage() {
           </div>
         )}
 
-        {/* Classified Dispatch Preview */}
-        {classified && !dispatched && (
+        {/* Route Builder */}
+        {routeBuilderVisible && !dispatched && (
           <div style={{ marginBottom: 28 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
               <h2 style={{ fontSize: 20, fontWeight: 700, color: 'var(--foreground)', margin: 0 }}>
-                AI Territory Assignment
+                Route Builder
               </h2>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--muted)' }}>
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#34c759', display: 'inline-block' }} /> High
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ff9500', display: 'inline-block', marginLeft: 8 }} /> Medium
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ff3b30', display: 'inline-block', marginLeft: 8 }} /> Low
-              </div>
+              {classified && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--muted)' }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#34c759', display: 'inline-block' }} /> High
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ff9500', display: 'inline-block', marginLeft: 8 }} /> Medium
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ff3b30', display: 'inline-block', marginLeft: 8 }} /> Low
+                </div>
+              )}
             </div>
 
             <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 16 }}>
-              Drag invoices between drivers to reassign
+              Drag invoices between drivers to assign routes
             </p>
             <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Object.keys(driverGroups).length}, 1fr)`, gap: 20 }}>
               {Object.entries(driverGroups).map(([driverName, driverFiles]) => {
                 const isUnassigned = driverName === 'Unassigned';
                 const color = isUnassigned ? '#8e8e93' : getDriverColor(driverName);
-                const driverId = driverFiles[0]?.assignedDriverId || '';
                 const isOver = dragOverDriver === driverName;
                 return (
                   <div
                     key={driverName}
                     onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverDriver(driverName); }}
                     onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverDriver(null); }}
-                    onDrop={(e) => { e.preventDefault(); handleDropOnDriverCol(driverName, driverId); }}
+                    onDrop={(e) => { e.preventDefault(); handleDropOnDriverCol(driverName); }}
                     style={{
                       background: isOver ? `${color}08` : 'var(--card)',
                       borderRadius: 18,
@@ -657,9 +703,19 @@ export default function UploadPage() {
                       {driverFiles.length > 0 && (
                         <button
                           type="button"
-                          onClick={() => {
+                          onClick={async () => {
                             if (isUnassigned) {
-                              // Remove unassigned files entirely
+                              // Remove unassigned files from DB and UI
+                              const unassignedIds = driverFiles.filter((f) => f.uploaded && f.uploadedId).map((f) => f.uploadedId!);
+                              if (unassignedIds.length > 0) {
+                                try {
+                                  await fetch('/api/invoices/clear', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ invoice_ids: unassignedIds }),
+                                  });
+                                } catch { /* best effort */ }
+                              }
                               setFiles((prev) => prev.filter((f) => f.assignedDriverName));
                             } else {
                               // Move all this driver's files to Unassigned
@@ -677,7 +733,7 @@ export default function UploadPage() {
                             transition: 'all 0.15s ease',
                           }}
                         >
-                          Clear
+                          {isUnassigned ? 'Clear All' : 'Clear'}
                         </button>
                       )}
                     </div>
@@ -933,8 +989,8 @@ export default function UploadPage() {
               </button>
             )}
 
-            {/* Dispatch All button (after classification) */}
-            {classified && !dispatched && (
+            {/* Save Routes button (after route builder is visible) */}
+            {routeBuilderVisible && !dispatched && files.some((f) => f.assignedDriverName) && (
               <button
                 onClick={dispatchAll}
                 disabled={dispatching}
@@ -954,7 +1010,7 @@ export default function UploadPage() {
                 {dispatching ? (
                   <>
                     <div style={{ width: 20, height: 20, border: '2.5px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                    AI Optimizing Routes...
+                    Saving Routes...
                   </>
                 ) : (
                   <>
@@ -962,7 +1018,7 @@ export default function UploadPage() {
                       <path d="M22 2 11 13" />
                       <path d="m22 2-7 20-4-9-9-4 20-7z" />
                     </svg>
-                    Dispatch All Routes
+                    Save Routes
                   </>
                 )}
               </button>

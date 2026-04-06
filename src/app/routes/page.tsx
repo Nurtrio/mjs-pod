@@ -172,6 +172,20 @@ export default function RoutesPage() {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'Save failed');
       }
+
+      // Clear unassigned invoices from DB after saving routes
+      if (unassigned.length > 0) {
+        const unassignedIds = unassigned.map((inv) => inv.id);
+        try {
+          await fetch('/api/invoices/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ invoice_ids: unassignedIds }),
+          });
+        } catch { /* best effort */ }
+        setUnassigned([]);
+      }
+
       showToast('Routes saved successfully!');
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Failed to save routes');
@@ -451,28 +465,60 @@ export default function RoutesPage() {
                   borderBottom: '0.5px solid var(--border)',
                 }}
               >
-                <h3
-                  style={{
-                    fontSize: 15,
-                    fontWeight: 600,
-                    color: 'var(--foreground)',
-                    margin: 0,
-                  }}
-                >
-                  Unassigned
-                </h3>
-                <span
-                  style={{
-                    background: 'rgba(60,60,67,0.08)',
-                    color: 'var(--muted)',
-                    fontSize: 12,
-                    fontWeight: 600,
-                    padding: '2px 10px',
-                    borderRadius: 100,
-                  }}
-                >
-                  {unassigned.length}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <h3
+                    style={{
+                      fontSize: 15,
+                      fontWeight: 600,
+                      color: 'var(--foreground)',
+                      margin: 0,
+                    }}
+                  >
+                    Unassigned
+                  </h3>
+                  <span
+                    style={{
+                      background: 'rgba(60,60,67,0.08)',
+                      color: 'var(--muted)',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      padding: '2px 10px',
+                      borderRadius: 100,
+                    }}
+                  >
+                    {unassigned.length}
+                  </span>
+                </div>
+                {unassigned.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const ids = unassigned.map((inv) => inv.id);
+                      try {
+                        await fetch('/api/invoices/clear', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ invoice_ids: ids }),
+                        });
+                      } catch { /* best effort */ }
+                      setUnassigned([]);
+                      showToast('Unassigned invoices cleared');
+                    }}
+                    style={{
+                      padding: '5px 12px',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      borderRadius: 8,
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      background: 'rgba(255,59,48,0.08)',
+                      color: '#ff3b30',
+                    }}
+                  >
+                    Clear All
+                  </button>
+                )}
               </div>
               <div
                 style={{
