@@ -48,7 +48,8 @@ export default function UploadPage() {
   const [classified, setClassified] = useState(false);
   const [dispatching, setDispatching] = useState(false);
   const [dispatched, setDispatched] = useState(false);
-  const [dispatchRoutes, setDispatchRoutes] = useState<{ driver_name: string; stop_count: number }[]>([]);
+  const [dispatchRoutes, setDispatchRoutes] = useState<{ driver_name: string; stop_count: number; stops: { customer_name: string; invoice_number: string; address: string }[] }[]>([]);
+  const [expandedDriver, setExpandedDriver] = useState<string | null>(null);
 
   const extractWithClaude = useCallback(async (file: File, startIndex: number) => {
     const formData = new FormData();
@@ -240,6 +241,11 @@ export default function UploadPage() {
         .map((r: Record<string, unknown>) => ({
           driver_name: (r.driver as { name: string })?.name || 'Unknown',
           stop_count: (r.stops as unknown[])?.length || 0,
+          stops: ((r.stops as { invoice?: { customer_name?: string; invoice_number?: string; customer_address?: string } }[] | undefined) || []).map((s) => ({
+            customer_name: s.invoice?.customer_name || 'Unknown',
+            invoice_number: s.invoice?.invoice_number || '—',
+            address: s.invoice?.customer_address || '',
+          })),
         }));
 
       setDispatchRoutes(routeSummary);
@@ -251,38 +257,40 @@ export default function UploadPage() {
     }
   };
 
-  // Swap a file's driver assignment
-  const swapDriver = (idx: number) => {
+  // Drag and drop between driver columns
+  const [dragFileIdx, setDragFileIdx] = useState<number | null>(null);
+  const [dragOverDriver, setDragOverDriver] = useState<string | null>(null);
+
+  const handleDragStartFile = (idx: number) => {
+    setDragFileIdx(idx);
+  };
+
+  const handleDropOnDriverCol = (driverName: string, driverId: string) => {
+    if (dragFileIdx === null) return;
+    const isUnassigned = driverName === 'Unassigned';
     setFiles((prev) =>
       prev.map((f, i) => {
-        if (i !== idx || !f.assignedDriverId) return f;
-        // Find all unique drivers from assignments
-        const driverPairs = prev
-          .filter((pf) => pf.assignedDriverId && pf.assignedDriverName)
-          .reduce<Record<string, string>>((acc, pf) => {
-            acc[pf.assignedDriverId!] = pf.assignedDriverName!;
-            return acc;
-          }, {});
-        const driverIds = Object.keys(driverPairs);
-        const currentIdx = driverIds.indexOf(f.assignedDriverId);
-        const nextIdx = (currentIdx + 1) % driverIds.length;
+        if (i !== dragFileIdx) return f;
         return {
           ...f,
-          assignedDriverId: driverIds[nextIdx],
-          assignedDriverName: driverPairs[driverIds[nextIdx]],
-          confidence: 'medium' as const,
-          reasoning: 'Manually reassigned by dispatcher',
+          assignedDriverId: isUnassigned ? undefined : driverId,
+          assignedDriverName: isUnassigned ? undefined : driverName,
+          confidence: isUnassigned ? undefined : 'medium' as const,
+          reasoning: isUnassigned ? undefined : 'Manually reassigned by dispatcher',
         };
       }),
     );
+    setDragFileIdx(null);
+    setDragOverDriver(null);
   };
 
   const anyExtracting = files.some((f) => f.extracting);
   const allUploaded = files.length > 0 && files.every((f) => f.uploaded);
 
-  // Group files by driver for dispatch preview
+  // Group files by driver for dispatch preview — always include Unassigned
   const driverGroups: Record<string, FileEntry[]> = {};
   if (classified) {
+    driverGroups['Unassigned'] = [];
     for (const f of files) {
       const key = f.assignedDriverName || 'Unassigned';
       if (!driverGroups[key]) driverGroups[key] = [];
@@ -311,9 +319,23 @@ export default function UploadPage() {
                 : 'Add PDF invoices to assign to driver routes'}
             </p>
           </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {files.length > 0 && (
+              <button
+                onClick={() => { setFiles([]); setClassified(false); setDispatched(false); setAllDone(false); setDispatchRoutes([]); setExpandedDriver(null); }}
+                style={{
+                  padding: '8px 18px', fontSize: 13, fontWeight: 600, borderRadius: 8,
+                  border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                  background: 'rgba(255,59,48,0.08)', color: '#ff3b30',
+                  transition: 'all 0.2s ease',
+                }}
+              >
+                Clear All
+              </button>
+            )}
 
-          {/* Mode toggle */}
-          <div
+            {/* Mode toggle */}
+            <div
             style={{
               display: 'flex',
               background: 'var(--card)',
@@ -357,6 +379,7 @@ export default function UploadPage() {
             >
               Upload Only
             </button>
+            </div>
           </div>
         </div>
 
@@ -389,44 +412,73 @@ export default function UploadPage() {
                   Routes Dispatched!
                 </h3>
                 <p style={{ fontSize: 14, color: 'var(--muted)', margin: 0, marginTop: 2 }}>
-                  AI-optimized routes are now on each driver&apos;s board
+                  Routes are live — tap a driver to verify stops
                 </p>
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 12 }}>
-              {dispatchRoutes.map((r) => (
-                <div
-                  key={r.driver_name}
-                  style={{
-                    flex: 1,
-                    background: 'var(--card)',
-                    borderRadius: 14,
-                    padding: '16px 20px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 12,
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 36, height: 36, borderRadius: '50%',
-                      background: getDriverColor(r.driver_name),
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      color: '#fff', fontSize: 16, fontWeight: 700,
-                    }}
-                  >
-                    {r.driver_name.charAt(0)}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {dispatchRoutes.map((r) => {
+                const color = getDriverColor(r.driver_name);
+                const isExpanded = expandedDriver === r.driver_name;
+                return (
+                  <div key={r.driver_name} style={{ background: 'var(--card)', borderRadius: 14, overflow: 'hidden', transition: 'all 0.2s ease' }}>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedDriver(isExpanded ? null : r.driver_name)}
+                      style={{
+                        width: '100%', border: 'none', background: 'transparent', cursor: 'pointer',
+                        padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 12, fontFamily: 'inherit',
+                      }}
+                    >
+                      <div style={{
+                        width: 36, height: 36, borderRadius: '50%', background: color,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        color: '#fff', fontSize: 16, fontWeight: 700, flexShrink: 0,
+                      }}>
+                        {r.driver_name.charAt(0)}
+                      </div>
+                      <div style={{ flex: 1, textAlign: 'left' }}>
+                        <p style={{ fontSize: 15, fontWeight: 700, color: 'var(--foreground)', margin: 0 }}>
+                          {r.driver_name}
+                        </p>
+                        <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>
+                          {r.stop_count} stop{r.stop_count !== 1 ? 's' : ''}
+                        </p>
+                      </div>
+                      <svg
+                        width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--muted)"
+                        strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"
+                        style={{ transition: 'transform 0.2s ease', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', flexShrink: 0 }}
+                      >
+                        <path d="m6 9 6 6 6-6" />
+                      </svg>
+                    </button>
+                    {isExpanded && r.stops.length > 0 && (
+                      <div style={{ borderTop: '1px solid var(--border)', padding: '12px 20px 16px' }}>
+                        {r.stops.map((s, si) => (
+                          <div key={si} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: si < r.stops.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                            <div style={{
+                              width: 28, height: 28, borderRadius: 8, background: `${color}15`,
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              fontSize: 13, fontWeight: 700, color: color, flexShrink: 0,
+                            }}>
+                              {si + 1}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--foreground)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {s.customer_name}
+                              </p>
+                              <p style={{ fontSize: 12, color: 'var(--muted)', margin: 0, marginTop: 2 }}>
+                                INV #{s.invoice_number}{s.address ? ` · ${s.address.slice(0, 40)}` : ''}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  <div>
-                    <p style={{ fontSize: 15, fontWeight: 700, color: 'var(--foreground)', margin: 0 }}>
-                      {r.driver_name}
-                    </p>
-                    <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>
-                      {r.stop_count} stop{r.stop_count !== 1 ? 's' : ''}
-                    </p>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -548,59 +600,121 @@ export default function UploadPage() {
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+            <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 16 }}>
+              Drag invoices between drivers to reassign
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Object.keys(driverGroups).length}, 1fr)`, gap: 20 }}>
               {Object.entries(driverGroups).map(([driverName, driverFiles]) => {
-                const color = getDriverColor(driverName);
+                const isUnassigned = driverName === 'Unassigned';
+                const color = isUnassigned ? '#8e8e93' : getDriverColor(driverName);
+                const driverId = driverFiles[0]?.assignedDriverId || '';
+                const isOver = dragOverDriver === driverName;
                 return (
                   <div
                     key={driverName}
+                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverDriver(driverName); }}
+                    onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverDriver(null); }}
+                    onDrop={(e) => { e.preventDefault(); handleDropOnDriverCol(driverName, driverId); }}
                     style={{
-                      background: 'var(--card)',
+                      background: isOver ? `${color}08` : 'var(--card)',
                       borderRadius: 18,
                       overflow: 'hidden',
-                      boxShadow: '0 1px 8px rgba(0,0,0,0.04)',
+                      boxShadow: isOver
+                        ? `0 0 0 2px ${color}50, 0 4px 20px ${color}15`
+                        : '0 1px 8px rgba(0,0,0,0.04)',
+                      transition: 'all 0.2s ease',
                     }}
                   >
                     {/* Driver column header */}
                     <div style={{
-                      padding: '18px 22px',
+                      padding: '14px 16px 14px 22px',
                       borderBottom: '1px solid var(--border)',
                       display: 'flex', alignItems: 'center', gap: 12,
-                      background: `${color}08`,
+                      background: isUnassigned ? 'rgba(142,142,147,0.06)' : `${color}08`,
                     }}>
                       <div style={{
-                        width: 40, height: 40, borderRadius: '50%',
-                        background: color,
+                        width: 40, height: 40, borderRadius: isUnassigned ? 12 : '50%',
+                        background: isUnassigned ? 'rgba(142,142,147,0.15)' : color,
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        color: '#fff', fontSize: 18, fontWeight: 700,
+                        color: isUnassigned ? '#8e8e93' : '#fff', fontSize: 18, fontWeight: 700, flexShrink: 0,
                       }}>
-                        {driverName.charAt(0)}
+                        {isUnassigned ? (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                            <circle cx="12" cy="7" r="4" />
+                            <line x1="18" y1="8" x2="23" y2="13" />
+                          </svg>
+                        ) : driverName.charAt(0)}
                       </div>
-                      <div>
-                        <h3 style={{ fontSize: 17, fontWeight: 700, color: 'var(--foreground)', margin: 0 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <h3 style={{ fontSize: 17, fontWeight: 700, color: isUnassigned ? 'var(--muted)' : 'var(--foreground)', margin: 0 }}>
                           {driverName}
                         </h3>
                         <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>
-                          {driverFiles.length} stop{driverFiles.length !== 1 ? 's' : ''}
+                          {driverFiles.length} invoice{driverFiles.length !== 1 ? 's' : ''}
                         </p>
                       </div>
+                      {driverFiles.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isUnassigned) {
+                              // Remove unassigned files entirely
+                              setFiles((prev) => prev.filter((f) => f.assignedDriverName));
+                            } else {
+                              // Move all this driver's files to Unassigned
+                              setFiles((prev) => prev.map((f) =>
+                                f.assignedDriverName === driverName
+                                  ? { ...f, assignedDriverId: undefined, assignedDriverName: undefined, confidence: undefined, reasoning: undefined }
+                                  : f
+                              ));
+                            }
+                          }}
+                          style={{
+                            padding: '6px 12px', fontSize: 12, fontWeight: 600, borderRadius: 8,
+                            border: 'none', cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0,
+                            background: 'rgba(255,59,48,0.08)', color: '#ff3b30',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
+                          Clear
+                        </button>
+                      )}
                     </div>
 
-                    {/* Stops list */}
-                    <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {/* Stops list — draggable */}
+                    <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8, minHeight: 80 }}>
                       {driverFiles.map((f, fi) => {
                         const confColor = f.confidence === 'high' ? '#34c759' : f.confidence === 'medium' ? '#ff9500' : '#ff3b30';
                         const globalIdx = files.indexOf(f);
                         return (
                           <div
                             key={fi}
+                            draggable
+                            onDragStart={() => handleDragStartFile(globalIdx)}
+                            onDragEnd={() => { setDragFileIdx(null); setDragOverDriver(null); }}
                             style={{
                               padding: '14px 16px',
-                              background: 'var(--background)',
+                              background: dragFileIdx === globalIdx ? 'rgba(52,199,89,0.06)' : 'var(--background)',
                               borderRadius: 14,
                               display: 'flex', alignItems: 'center', gap: 12,
+                              cursor: 'grab',
+                              opacity: dragFileIdx === globalIdx ? 0.5 : 1,
+                              transition: 'opacity 0.15s ease, background 0.15s ease',
+                              border: dragFileIdx === globalIdx ? '1px dashed var(--accent)' : '1px solid transparent',
                             }}
                           >
+                            {/* Drag handle */}
+                            <div style={{ flexShrink: 0, color: 'var(--muted-2)', display: 'flex', alignItems: 'center' }}>
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                <circle cx="9" cy="5" r="1.5" />
+                                <circle cx="15" cy="5" r="1.5" />
+                                <circle cx="9" cy="12" r="1.5" />
+                                <circle cx="15" cy="12" r="1.5" />
+                                <circle cx="9" cy="19" r="1.5" />
+                                <circle cx="15" cy="19" r="1.5" />
+                              </svg>
+                            </div>
                             <div style={{
                               width: 8, height: 8, borderRadius: '50%',
                               background: confColor, flexShrink: 0,
@@ -610,28 +724,21 @@ export default function UploadPage() {
                                 {f.customerName || 'Unknown'}
                               </p>
                               <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0, marginTop: 2 }}>
-                                INV #{f.invoiceNumber} {f.customerAddress ? `· ${f.customerAddress.slice(0, 40)}` : ''}
+                                INV #{f.invoiceNumber} {f.customerAddress ? `· ${f.customerAddress.slice(0, 35)}` : ''}
                               </p>
                             </div>
-                            <button
-                              onClick={() => swapDriver(globalIdx)}
-                              title="Reassign to other driver"
-                              style={{
-                                background: 'none', border: 'none', cursor: 'pointer',
-                                padding: '6px', borderRadius: 8, flexShrink: 0,
-                                color: 'var(--muted)', fontFamily: 'inherit',
-                              }}
-                            >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                                <polyline points="17 1 21 5 17 9" />
-                                <path d="M3 11V9a4 4 0 0 1 4-4h14" />
-                                <polyline points="7 23 3 19 7 15" />
-                                <path d="M21 13v2a4 4 0 0 1-4 4H3" />
-                              </svg>
-                            </button>
                           </div>
                         );
                       })}
+                      {driverFiles.length === 0 && (
+                        <div style={{
+                          padding: '24px 16px', textAlign: 'center',
+                          fontSize: 14, color: 'var(--muted-2)',
+                          border: '2px dashed var(--border)', borderRadius: 14,
+                        }}>
+                          Drop invoices here
+                        </div>
+                      )}
                     </div>
                   </div>
                 );

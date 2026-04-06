@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
-import { extractInvoiceData } from '@/lib/pdf-extract';
 
 export async function POST(request: NextRequest) {
+  try {
   const supabase = createServerClient();
   const formData = await request.formData();
 
@@ -44,24 +44,11 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // Attempt text extraction
-      let invoiceNumber: string | null = null;
-      let customerName: string | null = null;
-      let customerAddress: string | null = null;
+      // Use manual values (already extracted by /api/invoices/extract via Claude AI)
+      let invoiceNumber: string | null = manualInvoiceNumber;
+      const customerName: string | null = manualCustomerName;
+      const customerAddress: string | null = manualCustomerAddress;
 
-      try {
-        const extracted = await extractInvoiceData(buffer);
-        invoiceNumber = extracted.invoiceNumber;
-        customerName = extracted.customerName;
-        customerAddress = extracted.customerAddress;
-      } catch {
-        // Extraction failed — use filename as fallback invoice number
-      }
-
-      // Use manual values if provided, then extraction, then filename fallback
-      if (manualInvoiceNumber) invoiceNumber = manualInvoiceNumber;
-      if (manualCustomerName) customerName = manualCustomerName;
-      if (manualCustomerAddress) customerAddress = manualCustomerAddress;
       if (!invoiceNumber) {
         // Try to extract a 5-7 digit number from the filename (e.g. "Inv_350601_from_...")
         const fnMatch = file.name.match(/(\d{5,7})/);
@@ -99,4 +86,8 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({ invoices: results }, { status: 201 });
+  } catch (err) {
+    console.error('Upload route crash:', err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Internal server error', stack: err instanceof Error ? err.stack : undefined }, { status: 500 });
+  }
 }

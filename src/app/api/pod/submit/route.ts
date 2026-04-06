@@ -3,6 +3,8 @@ import { createServerClient } from '@/lib/supabase/server';
 import { generatePodPdf } from '@/lib/pdf-generate';
 import { uploadPodToDrive } from '@/lib/google-drive';
 
+export const maxDuration = 30;
+
 export async function POST(request: NextRequest) {
   const supabase = createServerClient();
 
@@ -132,8 +134,8 @@ export async function POST(request: NextRequest) {
       driver.name,
       dateStr
     );
-  } catch {
-    // Google Drive not configured or upload failed — continue without it
+  } catch (driveErr) {
+    console.error('Google Drive upload failed:', driveErr instanceof Error ? driveErr.message : driveErr);
   }
 
   // i. Update route_stop record with dwell time calculation
@@ -190,5 +192,5 @@ export async function POST(request: NextRequest) {
 
   // l. Return success
   const filename = `${invoice.invoice_number}.pdf`;
-  return NextResponse.json({ success: true, googleDriveFileId, filename });
+  return NextResponse.json({ success: true, googleDriveFileId, filename, driveError: googleDriveFileId ? null : 'Drive upload failed — check logs' });
 }

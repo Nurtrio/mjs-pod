@@ -67,3 +67,56 @@ export async function PATCH(
 
   return NextResponse.json(data);
 }
+
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ stopId: string }> }
+) {
+  const { stopId } = await params;
+  const supabase = createServerClient();
+
+  // Get the stop to find the invoice
+  const { data: stop } = await supabase
+    .from('route_stops')
+    .select('invoice_id, route_id')
+    .eq('id', stopId)
+    .single();
+
+  if (!stop) {
+    return NextResponse.json({ error: 'Stop not found' }, { status: 404 });
+  }
+
+  // Delete the stop
+  const { error } = await supabase
+    .from('route_stops')
+    .delete()
+    .eq('id', stopId);
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // Set the invoice back to unassigned
+  await supabase
+    .from('invoices')
+    .update({ status: 'unassigned' })
+    .eq('id', stop.invoice_id);
+
+  // Re-number remaining stops
+  const { data: remainingStops } = await supabase
+    .from('route_stops')
+    .select('id')
+    .eq('route_id', stop.route_id)
+    .order('stop_order', { ascending: true });
+
+  if (remainingStops) {
+    for (let i = 0; i < remainingStops.length; i++) {
+      await supabase
+        .from('route_stops')
+        .update({ stop_order: i + 1 })
+        .eq('id', remainingStops[i].id);
+    }
+  }
+
+  return NextResponse.json({ ok: true });
+}

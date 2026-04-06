@@ -118,6 +118,48 @@ function StepBar({ current }: { current: 1 | 2 | 3 }) {
   );
 }
 
+function SubmittingScreen() {
+  const [elapsed, setElapsed] = useState(0);
+  const totalSeconds = 7;
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setElapsed((prev) => Math.min(prev + 1, totalSeconds));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const progress = Math.min((elapsed / totalSeconds) * 100, 95);
+  const remaining = Math.max(totalSeconds - elapsed, 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background px-8">
+      {/* Animated spinner */}
+      <div className="relative mb-10">
+        <svg className="h-28 w-28" viewBox="0 0 120 120">
+          <circle cx="60" cy="60" r="52" fill="none" stroke="var(--border)" strokeWidth="6" />
+          <circle
+            cx="60" cy="60" r="52" fill="none" stroke="var(--accent)" strokeWidth="6"
+            strokeLinecap="round"
+            strokeDasharray={`${2 * Math.PI * 52}`}
+            strokeDashoffset={`${2 * Math.PI * 52 * (1 - progress / 100)}`}
+            transform="rotate(-90 60 60)"
+            style={{ transition: 'stroke-dashoffset 1s ease-out' }}
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-[32px] font-bold text-accent">{remaining}</span>
+          <span className="text-[12px] font-semibold uppercase tracking-wider text-muted">sec</span>
+        </div>
+      </div>
+
+      <p className="text-[24px] font-bold text-foreground">Processing POD...</p>
+      <p className="mt-3 text-[16px] text-muted">Uploading photo, signature & generating PDF</p>
+      <p className="mt-6 text-[14px] text-muted-2">Please don&apos;t close this page</p>
+    </div>
+  );
+}
+
 export default function DeliverPage() {
   const router = useRouter();
   const { stopId } = useParams<{ stopId: string }>();
@@ -259,18 +301,31 @@ export default function DeliverPage() {
     return (
       <div className="min-h-[calc(100vh-72px)] bg-background">
         <div className="px-6 py-7">
-          {/* Back button */}
-          <button
-            type="button"
-            onClick={() => router.push('/driver/route')}
-            className="mb-6 flex items-center gap-2 text-[18px] font-medium text-ios-blue transition-opacity active:opacity-60"
-            style={{ WebkitTapHighlightColor: 'transparent' }}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="h-5 w-5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-            </svg>
-            Route
-          </button>
+          {/* Back & View Route */}
+          <div className="mb-6 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => router.push('/driver/route')}
+              className="flex items-center gap-2 text-[18px] font-medium text-ios-blue transition-opacity active:opacity-60"
+              style={{ WebkitTapHighlightColor: 'transparent' }}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="h-5 w-5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+              </svg>
+              Route
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push('/driver/route')}
+              className="flex items-center gap-2 rounded-xl bg-ios-blue/10 px-4 py-2.5 text-[15px] font-semibold text-ios-blue transition-all duration-150 active:scale-[0.95]"
+              style={{ WebkitTapHighlightColor: 'transparent' }}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="h-4.5 w-4.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.007v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.007v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
+              </svg>
+              View All Stops
+            </button>
+          </div>
 
           {/* Delivery info header */}
           <div className="mb-6 rounded-2xl bg-card p-6" style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}>
@@ -280,13 +335,26 @@ export default function DeliverPage() {
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-[14px] font-medium uppercase tracking-wider text-muted">Stop {stop?.stop_order}</p>
-                <h2 className="mt-1 text-[24px] font-bold leading-tight text-foreground">{customerName}</h2>
+                <h2 className="mt-1 text-[26px] font-bold leading-tight text-foreground">{customerName}</h2>
                 <p className="mt-1.5 text-[17px] font-medium text-ios-blue">INV #{invoiceNumber}</p>
-                {stop?.invoice?.customer_address && (
-                  <p className="mt-2 text-[16px] leading-relaxed text-muted">{stop.invoice.customer_address}</p>
-                )}
               </div>
             </div>
+
+            {/* Address — large and prominent */}
+            {stop?.invoice?.customer_address && (
+              <div className="mt-5 flex items-start gap-4 rounded-xl bg-ios-blue/8 p-5">
+                <div className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-ios-blue/15">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-6 w-6 text-ios-blue">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
+                  </svg>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-semibold uppercase tracking-wider text-ios-blue/70">Delivery Address</p>
+                  <p className="mt-1 text-[22px] font-bold leading-snug text-foreground">{stop.invoice.customer_address}</p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* PDF Preview */}
@@ -324,8 +392,11 @@ export default function DeliverPage() {
         <StepBar current={1} />
 
         <div className="mb-4 rounded-2xl bg-card p-5" style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}>
-          <p className="text-[14px] font-medium text-muted">{customerName}</p>
-          <p className="text-[16px] font-semibold text-foreground">INV #{invoiceNumber}</p>
+          <p className="text-[18px] font-bold text-foreground">{customerName}</p>
+          <p className="mt-1 text-[15px] font-medium text-ios-blue">INV #{invoiceNumber}</p>
+          {stop?.invoice?.customer_address && (
+            <p className="mt-2 text-[17px] font-semibold leading-snug text-foreground/80">{stop.invoice.customer_address}</p>
+          )}
         </div>
 
         <h2 className="mb-5 text-[24px] font-bold text-foreground">Take Delivery Photo</h2>
@@ -368,8 +439,11 @@ export default function DeliverPage() {
         <StepBar current={2} />
 
         <div className="mb-4 rounded-2xl bg-card p-5" style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}>
-          <p className="text-[14px] font-medium text-muted">{customerName}</p>
-          <p className="text-[16px] font-semibold text-foreground">INV #{invoiceNumber}</p>
+          <p className="text-[18px] font-bold text-foreground">{customerName}</p>
+          <p className="mt-1 text-[15px] font-medium text-ios-blue">INV #{invoiceNumber}</p>
+          {stop?.invoice?.customer_address && (
+            <p className="mt-2 text-[17px] font-semibold leading-snug text-foreground/80">{stop.invoice.customer_address}</p>
+          )}
         </div>
 
         <h2 className="mb-2 text-[24px] font-bold text-foreground">Customer Signature</h2>
@@ -537,13 +611,7 @@ export default function DeliverPage() {
 
   // ── STEP: SUBMITTING ──
   if (step === 'submitting') {
-    return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background">
-        <div className="mb-8 h-14 w-14 animate-spin rounded-full border-[3px] border-separator border-t-accent" />
-        <p className="text-[22px] font-bold text-foreground">Uploading POD...</p>
-        <p className="mt-2 text-[15px] text-muted">Please don&apos;t close this page</p>
-      </div>
-    );
+    return <SubmittingScreen />;
   }
 
   // ── STEP: SUCCESS ──
