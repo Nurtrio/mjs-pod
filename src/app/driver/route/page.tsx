@@ -320,15 +320,52 @@ export default function DriverRoutePage() {
   const [editMode, setEditMode] = useState(false);
   const [removingStopId, setRemovingStopId] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<StopWithInvoice | null>(null);
+  const [reordering, setReordering] = useState(false);
+  const [localOrder, setLocalOrder] = useState<number[] | null>(null); // indices into pendingGroups
+  const localOrderRef = useRef<number[] | null>(null);
+  const dragActive = useRef(false);
+  const dragFromIdx = useRef<number>(0);
+  const dragCurrentIdx = useRef<number>(0);
+  const itemRects = useRef<DOMRect[]>([]);
+  const listRef = useRef<HTMLDivElement>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressTriggered = useRef(false);
+
+  // ETA tracking
+  const [driverPos, setDriverPos] = useState<{ lat: number; lng: number } | null>(null);
+  const [etas, setEtas] = useState<Record<string, { minutes: number | null; text: string | null; distance: string | null }>>({});
+  const etaFetchingRef = useRef(false);
+
+  // Watch driver's GPS position
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    const watcher = navigator.geolocation.watchPosition(
+      (pos) => setDriverPos({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => { /* silently fail — ETAs just won't show */ },
+      { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 }
+    );
+    return () => navigator.geolocation.clearWatch(watcher);
+  }, []);
+
+  // Non-passive touchmove handler so preventDefault() actually stops scrolling during drag
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const handler = (e: TouchEvent) => {
+      if (dragActive.current) {
+        e.preventDefault();
+        moveDrag(e.touches[0].clientY);
+      }
+    };
+    el.addEventListener('touchmove', handler, { passive: false });
+    return () => el.removeEventListener('touchmove', handler);
+  });
 
   const handleLongPressStart = (stop: StopWithInvoice) => {
     longPressTriggered.current = false;
     longPressTimer.current = setTimeout(() => {
       longPressTriggered.current = true;
       setEditMode(true);
-      // Haptic feedback on supported devices
       if (navigator.vibrate) navigator.vibrate(50);
     }, 800);
   };
@@ -338,6 +375,95 @@ export default function DriverRoutePage() {
       clearTimeout(longPressTimer.current);
       longPressTimer.current = null;
     }
+  };
+
+  // Helper to update both state and ref for localOrder
+  const updateLocalOrder = (order: number[] | null) => {
+    localOrderRef.current = order;
+    setLocalOrder(order);
+  };
+
+  // Capture all item rects when drag starts
+  const startDrag = (gIdx: number) => {
+    if (!listRef.current) return;
+    const items = listRef.current.querySelectorAll('[data-group-idx]');
+    itemRects.current = Array.from(items).map((el) => el.getBoundingClientRect());
+    dragActive.current = true;
+    dragFromIdx.current = gIdx;
+    dragCurrentIdx.current = gIdx;
+    updateLocalOrder(pendingGroups.map((_, i) => i));
+    if (navigator.vibrate) navigator.vibrate(30);
+  };
+
+  const moveDrag = (clientY: number) => {
+    const order = localOrderRef.current;
+    if (!dragActive.current || !order) return;
+    // Find which slot the finger is over
+    for (let i = 0; i < itemRects.current.length; i++) {
+      const rect = itemRects.current[i];
+      const midY = rect.top + rect.height / 2;
+      if (clientY < midY) {
+        if (i !== dragCurrentIdx.current) {
+          dragCurrentIdx.current = i;
+          const draggedVal = dragFromIdx.current;
+          const newOrder = order.filter((v) => v !== draggedVal);
+          newOrder.splice(i, 0, draggedVal);
+          updateLocalOrder(newOrder);
+        }
+        return;
+      }
+    }
+    // Past the last item
+    const lastIdx = itemRects.current.length - 1;
+    if (lastIdx !== dragCurrentIdx.current) {
+      dragCurrentIdx.current = lastIdx;
+      const draggedVal = dragFromIdx.current;
+      const newOrder = order.filter((v) => v !== draggedVal);
+      newOrder.push(draggedVal);
+      updateLocalOrder(newOrder);
+    }
+  };
+
+  const endDrag = async () => {
+    const order = localOrderRef.current;
+    if (!dragActive.current || !order || !route) {
+      dragActive.current = false;
+      updateLocalOrder(null);
+      return;
+    }
+    dragActive.current = false;
+
+    // Check if order actually changed
+    const changed = order.some((v, i) => v !== i);
+    if (!changed) {
+      updateLocalOrder(null);
+      return;
+    }
+
+    setReordering(true);
+    // Build new stop_order assignments from the reordered groups
+    const reorderedGroups = order.map((origIdx) => pendingGroups[origIdx]);
+    const flatStops = reorderedGroups.flatMap((g) => g.stops);
+    const updates: Promise<Response>[] = [];
+    flatStops.forEach((stop, i) => {
+      if (stop.stop_order !== i + 1) {
+        updates.push(
+          fetch(`/api/stops/${stop.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stop_order: i + 1 }),
+          })
+        );
+      }
+    });
+
+    try {
+      if (updates.length > 0) await Promise.all(updates);
+      await fetchRoute();
+    } catch { /* keep edit mode */ }
+
+    updateLocalOrder(null);
+    setReordering(false);
   };
 
   const handleRemoveStop = async (stop: StopWithInvoice) => {
@@ -384,6 +510,77 @@ export default function DriverRoutePage() {
     fetchRoute();
   }, [driver, router, fetchRoute]);
 
+  // Fetch ETAs when driver position or route changes
+  useEffect(() => {
+    if (!driverPos || !route) return;
+    const pending = (route.stops ?? []).filter((s) => s.status !== 'completed');
+    if (pending.length === 0) return;
+    if (etaFetchingRef.current) return;
+
+    const fetchEtas = async () => {
+      etaFetchingRef.current = true;
+      try {
+        const destinations = pending.map((s) => ({
+          address: s.invoice?.customer_address || '',
+        }));
+        const res = await fetch('/api/directions/eta', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            origin_lat: driverPos.lat,
+            origin_lng: driverPos.lng,
+            destinations,
+          }),
+        });
+        if (!res.ok) {
+          etaFetchingRef.current = false;
+          return;
+        }
+        const data = await res.json();
+        const newEtas: Record<string, { minutes: number | null; text: string | null; distance: string | null }> = {};
+        pending.forEach((s, i) => {
+          const eta = data.etas?.[i];
+          if (eta) {
+            newEtas[s.id] = { minutes: eta.duration_minutes, text: eta.duration_text, distance: eta.distance_text };
+          }
+        });
+        setEtas(newEtas);
+      } catch { /* silently fail */ }
+      etaFetchingRef.current = false;
+    };
+
+    // Debounce: only fetch every 60 seconds when position changes
+    const timer = setTimeout(fetchEtas, 1000);
+    return () => clearTimeout(timer);
+  }, [driverPos, route]);
+
+  // Re-fetch ETAs periodically (every 2 min) while route is active
+  useEffect(() => {
+    if (!driverPos || !route) return;
+    const interval = setInterval(() => {
+      if (!etaFetchingRef.current && driverPos && route) {
+        const pending = (route.stops ?? []).filter((s) => s.status !== 'completed');
+        if (pending.length === 0) return;
+        const destinations = pending.map((s) => ({ address: s.invoice?.customer_address || '' }));
+        fetch('/api/directions/eta', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ origin_lat: driverPos.lat, origin_lng: driverPos.lng, destinations }),
+        }).then((r) => r.json()).then((data) => {
+          const newEtas: Record<string, { minutes: number | null; text: string | null; distance: string | null }> = {};
+          pending.forEach((s, i) => {
+            const eta = data.etas?.[i];
+            if (eta) {
+              newEtas[s.id] = { minutes: eta.duration_minutes, text: eta.duration_text, distance: eta.distance_text };
+            }
+          });
+          setEtas(newEtas);
+        }).catch(() => {});
+      }
+    }, 120000); // 2 minutes
+    return () => clearInterval(interval);
+  }, [driverPos, route]);
+
   if (!driver) return null;
 
   const stops: StopWithInvoice[] = route?.stops ?? [];
@@ -429,12 +626,12 @@ export default function DriverRoutePage() {
     <div className="min-h-[calc(100vh-72px)] bg-background">
       {/* Compact driver header with integrated progress */}
       <div className="px-5 pt-5 pb-2">
-        <div className="rounded-2xl bg-card" style={{ boxShadow: '0 1px 6px rgba(0,0,0,0.05)' }}>
+        <div className="rounded-2xl bg-card" style={{ boxShadow: '0 2px 12px rgba(245,197,24,0.2)', borderTop: '3px solid #f5c518' }}>
           {/* Top row: avatar, name, date, count, refresh */}
           <div className="flex items-center gap-4 px-5 pt-4 pb-3">
             <div
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[17px] font-bold text-white"
-              style={{ backgroundColor: driverColor }}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[17px] font-bold"
+              style={{ backgroundColor: '#f5c518', color: '#1a1a1a' }}
             >
               {driverInitial}
             </div>
@@ -473,7 +670,7 @@ export default function DriverRoutePage() {
                     width: `${(completedCount / totalCount) * 100}%`,
                     background: completedCount === totalCount
                       ? 'linear-gradient(90deg, #34c759, #30d158)'
-                      : `linear-gradient(90deg, ${driverColor}, ${driverColor}dd)`,
+                      : 'linear-gradient(90deg, #f5c518, #e6b800)',
                   }}
                 />
               </div>
@@ -545,8 +742,8 @@ export default function DriverRoutePage() {
                     <button
                       type="button"
                       onClick={() => setEditMode(false)}
-                      className="rounded-lg bg-accent px-4 py-2 text-[14px] font-bold text-white transition-all duration-150 active:scale-95"
-                      style={{ WebkitTapHighlightColor: 'transparent' }}
+                      className="rounded-lg px-4 py-2 text-[14px] font-bold transition-all duration-150 active:scale-95"
+                      style={{ WebkitTapHighlightColor: 'transparent', background: '#f5c518', color: '#1a1a1a' }}
                     >
                       Done
                     </button>
@@ -555,14 +752,27 @@ export default function DriverRoutePage() {
                     <p className="text-[12px] text-muted-2">Hold to edit</p>
                   )}
                 </div>
-                <div className="space-y-4">
-                  {pendingGroups.map((group, gIdx) => {
+                <div
+                  className="space-y-4"
+                  ref={listRef}
+                  onTouchEnd={() => { if (dragActive.current) endDrag(); }}
+                  onTouchCancel={() => { dragActive.current = false; updateLocalOrder(null); }}
+                >
+                  {(localOrder ? localOrder.map((i) => ({ group: pendingGroups[i], origIdx: i })) : pendingGroups.map((g, i) => ({ group: g, origIdx: i }))).map(({ group, origIdx }, gIdx) => {
                     const firstStop = group.stops[0];
                     const isMulti = group.stops.length > 1;
                     return (
-                      <div key={group.key} className="relative">
-                        {/* Red X remove button — visible in edit mode (removes first stop or all in group) */}
-                        {editMode && (
+                      <div
+                        key={group.key}
+                        className="relative"
+                        data-group-idx={gIdx}
+                        style={{
+                          transition: localOrder ? 'transform 0.15s ease, opacity 0.15s ease' : 'none',
+                          opacity: dragActive.current && origIdx === dragFromIdx.current ? 0.6 : 1,
+                        }}
+                      >
+                        {/* Red X remove button */}
+                        {editMode && !dragActive.current && (
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); setConfirmRemove(firstStop); }}
@@ -574,29 +784,47 @@ export default function DriverRoutePage() {
                             </svg>
                           </button>
                         )}
-                        <button
+                        <div
                           onClick={() => { if (!longPressTriggered.current && !editMode) setSelectedGroup(group.stops); }}
-                          onTouchStart={() => handleLongPressStart(firstStop)}
-                          onTouchEnd={handleLongPressEnd}
-                          onTouchCancel={handleLongPressEnd}
-                          onMouseDown={() => handleLongPressStart(firstStop)}
+                          onTouchStart={(e) => {
+                            if (editMode) {
+                              startDrag(origIdx);
+                            } else {
+                              handleLongPressStart(firstStop);
+                            }
+                          }}
+                          onTouchEnd={() => { if (!editMode) handleLongPressEnd(); }}
+                          onTouchCancel={() => { if (!editMode) handleLongPressEnd(); }}
+                          onMouseDown={() => { if (!editMode) handleLongPressStart(firstStop); }}
                           onMouseUp={handleLongPressEnd}
                           onMouseLeave={handleLongPressEnd}
-                          className="flex w-full items-start gap-5 rounded-2xl bg-card p-6 text-left transition-all duration-150 active:scale-[0.98] active:bg-card-hover"
+                          className="flex w-full items-start gap-5 rounded-2xl bg-card p-6 text-left transition-all duration-150 active:scale-[0.98]"
                           style={{
                             WebkitTapHighlightColor: 'transparent',
                             minHeight: 100,
-                            boxShadow: gIdx === 0
-                              ? '0 2px 12px rgba(52,199,89,0.12), 0 1px 4px rgba(0,0,0,0.04)'
-                              : '0 1px 8px rgba(0,0,0,0.04)',
-                            border: gIdx === 0 ? '2px solid rgba(52,199,89,0.25)' : '1px solid transparent',
-                            animation: editMode ? 'wiggle 0.3s ease-in-out infinite alternate' : 'none',
+                            boxShadow: gIdx === 0 && !editMode
+                              ? '0 2px 12px rgba(245,197,24,0.25), 0 1px 4px rgba(0,0,0,0.04)'
+                              : editMode ? '0 2px 12px rgba(0,0,0,0.08)' : '0 1px 8px rgba(0,0,0,0.04)',
+                            border: gIdx === 0 && !editMode ? '2px solid rgba(245,197,24,0.5)' : '1px solid transparent',
+                            animation: editMode && !localOrder ? 'wiggle 0.3s ease-in-out infinite alternate' : 'none',
+                            cursor: editMode ? 'grab' : 'pointer',
                           }}
                         >
+                          {/* Drag handle in edit mode */}
+                          {editMode && (
+                            <div className="flex shrink-0 items-center text-muted-2">
+                              <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                                <circle cx="9" cy="5" r="1.5" /><circle cx="15" cy="5" r="1.5" />
+                                <circle cx="9" cy="10" r="1.5" /><circle cx="15" cy="10" r="1.5" />
+                                <circle cx="9" cy="15" r="1.5" /><circle cx="15" cy="15" r="1.5" />
+                                <circle cx="9" cy="20" r="1.5" /><circle cx="15" cy="20" r="1.5" />
+                              </svg>
+                            </div>
+                          )}
                           {/* Stop number */}
                           <div
-                            className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-[20px] font-bold text-white"
-                            style={{ backgroundColor: gIdx === 0 ? 'var(--accent)' : 'var(--blue)' }}
+                            className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-[20px] font-bold"
+                            style={{ backgroundColor: gIdx === 0 && !editMode ? '#f5c518' : '#1a1a1a', color: gIdx === 0 && !editMode ? '#1a1a1a' : '#f5c518' }}
                           >
                             {firstStop.stop_order}
                           </div>
@@ -623,6 +851,29 @@ export default function DriverRoutePage() {
                                 {group.address}
                               </p>
                             )}
+                            {/* ETA bubble */}
+                            {(() => {
+                              const stopEta = etas[firstStop.id];
+                              if (!stopEta || stopEta.minutes === null) return null;
+                              return (
+                                <div className="mt-2 flex items-center gap-2">
+                                  <span
+                                    className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] font-bold"
+                                    style={{ background: stopEta.minutes <= 15 ? 'rgba(52,199,89,0.12)' : stopEta.minutes <= 30 ? 'rgba(255,149,0,0.12)' : 'rgba(255,59,48,0.12)', color: stopEta.minutes <= 15 ? '#34c759' : stopEta.minutes <= 30 ? '#ff9500' : '#ff3b30' }}
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="h-3.5 w-3.5">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25m-4.5 0V6.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v3.375m-4.5 0h4.5" />
+                                    </svg>
+                                    {stopEta.minutes} min
+                                  </span>
+                                  {stopEta.distance && (
+                                    <span className="text-[12px] font-medium text-muted-2">
+                                      {stopEta.distance}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })()}
                             {isMulti ? (
                               <div className="mt-2 flex flex-wrap gap-2">
                                 {group.stops.map((s) => (
@@ -645,7 +896,7 @@ export default function DriverRoutePage() {
                               </svg>
                             </div>
                           )}
-                        </button>
+                        </div>
                       </div>
                     );
                   })}

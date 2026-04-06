@@ -42,6 +42,27 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* ===== Driver Bold Yellow Theme ===== */
+.driver-theme {
+  --background: #fef9e7;
+  --foreground: #1a1a1a;
+  --secondary-bg: #ffffff;
+  --tertiary-bg: #fef3cd;
+  --elevated: #ffffff;
+  --card: #ffffff;
+  --card-hover: #fff8dc;
+  --border: rgba(200,170,50,0.18);
+  --separator: rgba(200,170,50,0.15);
+  --accent: #34c759;
+  --accent-hover: #28a745;
+  --blue: #007aff;
+  --muted: rgba(60,60,67,0.55);
+  --muted-2: rgba(60,60,67,0.28);
+  --driver-yellow: #f5c518;
+  --driver-yellow-dark: #d4a800;
+  --driver-yellow-light: #fef3cd;
+}
+
 /* ===== Base ===== */
 
 html {
