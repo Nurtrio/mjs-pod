@@ -74,12 +74,12 @@ function InvoicePdfPreview({ url, invoiceNumber }: { url: string; invoiceNumber:
               </svg>
             </button>
           </div>
-          <div className="flex-1 overflow-auto">
+          <div className="flex-1 overflow-auto" style={{ touchAction: 'pinch-zoom pan-x pan-y' }}>
             <iframe
               src={`${url}#toolbar=1&navpanes=0&view=FitH`}
               className="h-full w-full border-0"
               title="Invoice fullscreen"
-              style={{ minHeight: '100%' }}
+              style={{ minHeight: '100%', touchAction: 'auto' }}
             />
           </div>
         </div>
@@ -174,9 +174,11 @@ export default function DeliverPage() {
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
+  const [backorderNotes, setBackorderNotes] = useState('');
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [podFilename, setPodFilename] = useState('');
 
+  // Load stop data
   useEffect(() => {
     if (!driver) {
       router.replace('/driver');
@@ -191,14 +193,47 @@ export default function DeliverPage() {
       })
       .then((data) => {
         setStop(data);
-        // Record arrival time when driver opens this stop
-        if (data && !data.arrived_at && data.status === 'pending') {
-          fetch(`/api/stops/${stopId}/arrive`, { method: 'POST' }).catch(() => {});
-        }
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load'))
       .finally(() => setLoading(false));
   }, [driver, stopId, router]);
+
+  // GPS-based arrival detection — only mark arrived when driver is near customer address
+  useEffect(() => {
+    if (!stop || stop.arrived_at || stop.status !== 'pending' || !stopId) return;
+
+    let watchId: number | null = null;
+    let arrived = false;
+
+    const checkArrival = (lat: number, lng: number) => {
+      if (arrived) return;
+      fetch(`/api/stops/${stopId}/arrive`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gps_lat: lat, gps_lng: lng }),
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.ok) {
+            arrived = true;
+            // Update local state so we don't keep checking
+            setStop((prev) => prev ? { ...prev, arrived_at: new Date().toISOString() } : prev);
+            if (watchId != null) navigator.geolocation.clearWatch(watchId);
+          }
+        })
+        .catch(() => {});
+    };
+
+    watchId = navigator.geolocation.watchPosition(
+      (pos) => checkArrival(pos.coords.latitude, pos.coords.longitude),
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 },
+    );
+
+    return () => {
+      if (watchId != null) navigator.geolocation.clearWatch(watchId);
+    };
+  }, [stop?.arrived_at, stop?.status, stopId]);
 
   const handlePhotoCapture = useCallback((file: File, previewUrl: string) => {
     setPhotoFile(file);
@@ -226,6 +261,7 @@ export default function DeliverPage() {
       formData.append('photo', photoFile);
       formData.append('signature', signatureDataUrl);
       if (notes.trim()) formData.append('notes', notes.trim());
+      if (backorderNotes.trim()) formData.append('backorder_notes', backorderNotes.trim());
 
       try {
         const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
@@ -578,6 +614,37 @@ export default function DeliverPage() {
               rows={3}
               className="w-full resize-none rounded-xl bg-background p-5 text-[17px] leading-relaxed text-foreground placeholder:text-muted-2 focus:outline-none focus:ring-2 focus:ring-accent/30"
             />
+          </div>
+
+          {/* Backorders */}
+          <div className="rounded-2xl bg-card p-6" style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}>
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg" style={{ background: 'rgba(255,59,48,0.1)' }}>
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-5 w-5" style={{ color: '#ff3b30' }}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+              </div>
+              <p className="text-[18px] font-semibold text-foreground">Backorders <span className="font-normal text-muted">(if any)</span></p>
+            </div>
+            <textarea
+              value={backorderNotes}
+              onChange={(e) => setBackorderNotes(e.target.value)}
+              placeholder="e.g. B/O 3 cases bleach, 1 box trash bags..."
+              rows={3}
+              className="w-full resize-none rounded-xl p-5 text-[17px] leading-relaxed text-foreground placeholder:text-muted-2 focus:outline-none focus:ring-2"
+              style={{
+                background: backorderNotes ? 'rgba(255,59,48,0.04)' : 'var(--background)',
+                border: backorderNotes ? '1px solid rgba(255,59,48,0.2)' : '1px solid transparent',
+              }}
+            />
+            {backorderNotes.trim() && (
+              <div className="mt-3 flex items-center gap-2 rounded-lg px-3 py-2" style={{ background: 'rgba(255,59,48,0.06)' }}>
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="#ff3b30" className="h-4 w-4 shrink-0">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                </svg>
+                <p className="text-[13px] font-medium" style={{ color: '#ff3b30' }}>This delivery will be flagged as having backorders</p>
+              </div>
+            )}
           </div>
 
           {submitError && (

@@ -44,6 +44,7 @@ export interface RouteStop {
   gps_lat: number | null;
   gps_lng: number | null;
   notes: string | null;
+  backorder_notes?: string | null;
   invoice?: Invoice;
 }
 

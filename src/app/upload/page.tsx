@@ -436,103 +436,40 @@ export default function UploadPage() {
           </div>
         </div>
 
-        {/* Dispatch Success Banner */}
+        {/* Dispatch Success — simple confirmation, redirects to Route Builder */}
         {dispatched && (
           <div
             style={{
               background: 'rgba(52,199,89,0.08)',
-              borderRadius: 18,
-              padding: '24px 28px',
+              borderRadius: 16,
+              padding: '20px 24px',
               marginBottom: 28,
-              boxShadow: '0 1px 8px rgba(0,0,0,0.04)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 14,
               animation: 'scale-in 0.3s ease-out',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
-              <div
-                style={{
-                  width: 44, height: 44, borderRadius: 14,
-                  background: 'rgba(52,199,89,0.15)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}
-              >
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#34c759" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M20 6 9 17l-5-5" />
-                </svg>
-              </div>
-              <div>
-                <h3 style={{ fontSize: 18, fontWeight: 700, color: '#34c759', margin: 0 }}>
-                  Routes Dispatched!
-                </h3>
-                <p style={{ fontSize: 14, color: 'var(--muted)', margin: 0, marginTop: 2 }}>
-                  Routes are live — tap a driver to verify stops
-                </p>
-              </div>
+            <div style={{ width: 40, height: 40, borderRadius: 12, background: 'rgba(52,199,89,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#34c759" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {dispatchRoutes.map((r) => {
-                const color = getDriverColor(r.driver_name);
-                const isExpanded = expandedDriver === r.driver_name;
-                return (
-                  <div key={r.driver_name} style={{ background: 'var(--card)', borderRadius: 14, overflow: 'hidden', transition: 'all 0.2s ease' }}>
-                    <button
-                      type="button"
-                      onClick={() => setExpandedDriver(isExpanded ? null : r.driver_name)}
-                      style={{
-                        width: '100%', border: 'none', background: 'transparent', cursor: 'pointer',
-                        padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 12, fontFamily: 'inherit',
-                      }}
-                    >
-                      <div style={{
-                        width: 36, height: 36, borderRadius: '50%', background: color,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        color: '#fff', fontSize: 16, fontWeight: 700, flexShrink: 0,
-                      }}>
-                        {r.driver_name.charAt(0)}
-                      </div>
-                      <div style={{ flex: 1, textAlign: 'left' }}>
-                        <p style={{ fontSize: 15, fontWeight: 700, color: 'var(--foreground)', margin: 0 }}>
-                          {r.driver_name}
-                        </p>
-                        <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>
-                          {r.stop_count} stop{r.stop_count !== 1 ? 's' : ''}
-                        </p>
-                      </div>
-                      <svg
-                        width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--muted)"
-                        strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"
-                        style={{ transition: 'transform 0.2s ease', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', flexShrink: 0 }}
-                      >
-                        <path d="m6 9 6 6 6-6" />
-                      </svg>
-                    </button>
-                    {isExpanded && r.stops.length > 0 && (
-                      <div style={{ borderTop: '1px solid var(--border)', padding: '12px 20px 16px' }}>
-                        {r.stops.map((s, si) => (
-                          <div key={si} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: si < r.stops.length - 1 ? '1px solid var(--border)' : 'none' }}>
-                            <div style={{
-                              width: 28, height: 28, borderRadius: 8, background: `${color}15`,
-                              display: 'flex', alignItems: 'center', justifyContent: 'center',
-                              fontSize: 13, fontWeight: 700, color: color, flexShrink: 0,
-                            }}>
-                              {si + 1}
-                            </div>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--foreground)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {s.customer_name}
-                              </p>
-                              <p style={{ fontSize: 12, color: 'var(--muted)', margin: 0, marginTop: 2 }}>
-                                INV #{s.invoice_number}{s.address ? ` · ${s.address.slice(0, 40)}` : ''}
-                              </p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 16, fontWeight: 700, color: '#34c759', margin: 0 }}>Routes are live</p>
+              <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0, marginTop: 2 }}>Invoices uploaded and routes dispatched to drivers.</p>
             </div>
+            <a
+              href="/routes"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '8px 16px', fontSize: 13, fontWeight: 600,
+                color: '#34c759', background: 'rgba(52,199,89,0.1)',
+                borderRadius: 10, textDecoration: 'none', flexShrink: 0,
+              }}
+            >
+              View Routes →
+            </a>
           </div>
         )}
 

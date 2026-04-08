@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 const DRIVER_COLORS: Record<string, string> = {
@@ -9,7 +9,14 @@ const DRIVER_COLORS: Record<string, string> = {
   Al: '#8b5cf6',
 };
 
-const HOME_BASE = { lat: 33.8461, lng: -117.8819 }; // 3066 E La Palma Ave, Anaheim
+const HOME_BASE = { lat: 33.8458, lng: -117.8685 }; // 3066 E La Palma Ave, Anaheim, CA 92806
+
+const STATUS_DOTS: Record<string, { color: string; label: string }> = {
+  at_stop: { color: '#34c759', label: 'At Stop' },
+  en_route: { color: '#007aff', label: 'En Route' },
+  stationary: { color: '#ff9500', label: 'Stationary' },
+  idle: { color: '#8e8e93', label: 'Idle' },
+};
 
 interface DriverActivity {
   status: 'en_route' | 'at_stop' | 'stationary' | 'idle';
@@ -29,6 +36,26 @@ interface DriverLoc {
   activity?: DriverActivity;
 }
 
+interface CompletedStop {
+  id: string;
+  gps_lat: number | null;
+  gps_lng: number | null;
+  completed_at: string | null;
+  arrived_at: string | null;
+  dwell_seconds: number | null;
+  pod_pdf_storage_path: string | null;
+  invoice?: {
+    customer_name?: string;
+    invoice_number?: string;
+  };
+}
+
+interface RouteData {
+  id: string;
+  driver_id: string;
+  stops: CompletedStop[];
+}
+
 function getDriverColor(name: string): string {
   for (const [key, color] of Object.entries(DRIVER_COLORS)) {
     if (name.toLowerCase().includes(key.toLowerCase())) return color;
@@ -42,6 +69,14 @@ function timeAgo(dateStr: string): string {
   if (mins < 1) return 'Just now';
   if (mins < 60) return `${mins}m ago`;
   return `${Math.floor(mins / 60)}h ago`;
+}
+
+function formatTime(dateStr: string): string {
+  return new Date(dateStr).toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
 }
 
 function activityLabel(activity?: DriverActivity): { text: string; color: string; bgColor: string } {
@@ -72,29 +107,102 @@ function activityLabel(activity?: DriverActivity): { text: string; color: string
   }
 }
 
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+
 export default function LiveMap() {
   const mapRef = useRef<HTMLDivElement>(null);
   const leafletMapRef = useRef<L.Map | null>(null);
   const markersRef = useRef<Record<string, L.Marker>>({});
+  const deliveryMarkersRef = useRef<L.Marker[]>([]);
+  const trailLinesRef = useRef<Record<string, L.Polyline>>({});
+  const legendRef = useRef<L.Control | null>(null);
+  const hasFitBoundsRef = useRef(false);
+
   const [locations, setLocations] = useState<DriverLoc[]>([]);
+  const [routes, setRoutes] = useState<RouteData[]>([]);
+  const [trails, setTrails] = useState<Record<string, [number, number][]>>({});
   const [mapReady, setMapReady] = useState(false);
+  const [podViewer, setPodViewer] = useState<{ url: string; customer: string; invoice: string } | null>(null);
 
-  // Fetch initial locations with activity
-  useEffect(() => {
-    const fetchLocations = () => {
-      fetch('/api/drivers/location?activity=true')
-        .then((r) => r.json())
-        .then((data) => {
-          if (Array.isArray(data)) setLocations(data);
-        })
-        .catch(() => {});
-    };
 
-    fetchLocations();
-    // Refresh activity data every 15 seconds
-    const interval = setInterval(fetchLocations, 15000);
-    return () => clearInterval(interval);
+  const today = new Date().toISOString().split('T')[0];
+
+  // Fetch locations with activity
+  const fetchLocations = useCallback(() => {
+    fetch('/api/drivers/location?activity=true')
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data)) setLocations(data);
+      })
+      .catch(() => {});
   }, []);
+
+  // Fetch routes for completed stop markers
+  const fetchRoutes = useCallback(() => {
+    fetch(`/api/routes?date=${today}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data)) setRoutes(data);
+      })
+      .catch(() => {});
+  }, [today]);
+
+  // Fetch trail history for a driver
+  const fetchTrailHistory = useCallback(
+    (driverId: string) => {
+      fetch(`/api/drivers/location/history?driver_id=${driverId}&date=${today}`)
+        .then((r) => {
+          if (!r.ok) throw new Error('not ok');
+          return r.json();
+        })
+        .then((data) => {
+          if (data.history && Array.isArray(data.history)) {
+            const points: [number, number][] = data.history.map(
+              (h: { lat: number; lng: number }) => [h.lat, h.lng] as [number, number]
+            );
+            setTrails((prev) => ({ ...prev, [driverId]: points }));
+          }
+        })
+        .catch(() => {
+          // Silently ignore — trails just won't show
+        });
+    },
+    [today]
+  );
+
+  // Initial fetch + polling every 8 seconds
+  useEffect(() => {
+    fetchLocations();
+    fetchRoutes();
+    const interval = setInterval(fetchLocations, 8000);
+    // Refresh routes less frequently (every 30s)
+    const routeInterval = setInterval(fetchRoutes, 30000);
+    return () => {
+      clearInterval(interval);
+      clearInterval(routeInterval);
+    };
+  }, [fetchLocations, fetchRoutes]);
+
+  // Fetch trail history when we get driver IDs
+  useEffect(() => {
+    for (const loc of locations) {
+      if (loc.driver_id && !trails[loc.driver_id]) {
+        fetchTrailHistory(loc.driver_id);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locations, fetchTrailHistory]);
+
+  // Refresh trails every 30 seconds
+  useEffect(() => {
+    if (locations.length === 0) return;
+    const interval = setInterval(() => {
+      for (const loc of locations) {
+        if (loc.driver_id) fetchTrailHistory(loc.driver_id);
+      }
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [locations, fetchTrailHistory]);
 
   // Subscribe to Supabase Realtime for position updates
   useEffect(() => {
@@ -115,13 +223,28 @@ export default function LiveMap() {
               const exists = prev.findIndex((l) => l.driver_id === newLoc.driver_id);
               if (exists >= 0) {
                 const updated = [...prev];
-                updated[exists] = { ...updated[exists], lat: newLoc.lat, lng: newLoc.lng, speed: newLoc.speed, heading: newLoc.heading, recorded_at: newLoc.recorded_at };
+                updated[exists] = {
+                  ...updated[exists],
+                  lat: newLoc.lat,
+                  lng: newLoc.lng,
+                  speed: newLoc.speed,
+                  heading: newLoc.heading,
+                  recorded_at: newLoc.recorded_at,
+                };
                 return updated;
               }
               return [...prev, newLoc];
             });
+            // Append to trail in-memory
+            setTrails((prev) => {
+              const existing = prev[newLoc.driver_id] || [];
+              return {
+                ...prev,
+                [newLoc.driver_id]: [...existing, [newLoc.lat, newLoc.lng] as [number, number]],
+              };
+            });
           }
-        },
+        }
       )
       .subscribe();
 
@@ -151,9 +274,11 @@ export default function LiveMap() {
 
       L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '',
-        maxZoom: 18,
+      // CartoDB Positron tiles for clean look
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; <a href="https://carto.com/">CARTO</a>',
+        maxZoom: 19,
+        subdomains: 'abcd',
       }).addTo(map);
 
       // Home base marker
@@ -161,8 +286,8 @@ export default function LiveMap() {
         className: '',
         html: `<div style="
           width: 36px; height: 36px; border-radius: 50%;
-          background: #34c759; border: 3px solid #fff;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+          background: #007aff; border: 3px solid #fff;
+          box-shadow: 0 2px 8px rgba(0,122,255,0.4);
           display: flex; align-items: center; justify-content: center;
           color: #fff; font-size: 16px; font-weight: 700;
         ">H</div>`,
@@ -174,12 +299,43 @@ export default function LiveMap() {
         .bindPopup('<b>MJS Home Base</b><br/>3066 E La Palma Ave<br/>Anaheim, CA 92806')
         .addTo(map);
 
+      // Legend control
+      const LegendControl = L.Control.extend({
+        onAdd: function () {
+          const div = L.DomUtil.create('div');
+          div.style.cssText =
+            'background: rgba(255,255,255,0.95); padding: 10px 14px; border-radius: 10px; ' +
+            'box-shadow: 0 1px 6px rgba(0,0,0,0.12); font-family: -apple-system, sans-serif; ' +
+            'font-size: 11px; line-height: 20px; color: #333; backdrop-filter: blur(8px);';
+          div.innerHTML = `
+            <div style="font-weight:700;margin-bottom:4px;font-size:12px;">Legend</div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="width:10px;height:10px;border-radius:50%;background:#007aff;display:inline-block;border:1.5px solid #fff;box-shadow:0 0 0 1px #007aff;"></span>
+              Home Base
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="width:10px;height:10px;border-radius:50%;background:#3b82f6;display:inline-block;border:1.5px solid #fff;box-shadow:0 0 0 1px #3b82f6;"></span>
+              Driver
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="width:10px;height:10px;border-radius:50%;background:#22c55e;display:inline-block;border:1.5px solid #fff;box-shadow:0 0 0 1px #22c55e;"></span>
+              Completed Delivery
+            </div>
+          `;
+          return div;
+        },
+      });
+
+      const legend = new LegendControl({ position: 'bottomleft' });
+      legend.addTo(map);
+      legendRef.current = legend;
+
       leafletMapRef.current = map;
       setMapReady(true);
     });
   }, []);
 
-  // Update markers when locations change
+  // Update driver markers when locations change
   useEffect(() => {
     if (!mapReady || !leafletMapRef.current) return;
 
@@ -211,12 +367,16 @@ export default function LiveMap() {
               border-radius: 50%; border: 2px solid ${pulseColor}40;
               animation: pulse-ring 2s ease-out infinite;
             "></div>
-            ${isAtStop || isStationary ? `<div style="
+            ${
+              isAtStop || isStationary
+                ? `<div style="
               position: absolute; bottom: -8px; left: 50%; transform: translateX(-50%);
               background: ${actInfo.color}; color: #fff;
               font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 4px;
               white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,0.2);
-            ">${loc.activity?.dwell_minutes || 0}m</div>` : ''}
+            ">${loc.activity?.dwell_minutes || 0}m</div>`
+                : ''
+            }
           </div>`,
           iconSize: [42, 42],
           iconAnchor: [21, 21],
@@ -241,14 +401,151 @@ export default function LiveMap() {
           markersRef.current[loc.driver_id].setIcon(icon);
           markersRef.current[loc.driver_id].setPopupContent(popupContent);
         } else {
-          const marker = L.marker([loc.lat, loc.lng], { icon })
-            .bindPopup(popupContent)
-            .addTo(map);
+          const marker = L.marker([loc.lat, loc.lng], { icon }).bindPopup(popupContent).addTo(map);
           markersRef.current[loc.driver_id] = marker;
+        }
+      }
+
+      // Auto-fit bounds once when data first loads
+      if (!hasFitBoundsRef.current && locations.length > 0) {
+        const allPoints: [number, number][] = [[HOME_BASE.lat, HOME_BASE.lng]];
+        for (const loc of locations) {
+          allPoints.push([loc.lat, loc.lng]);
+        }
+        if (allPoints.length > 1) {
+          const bounds = L.latLngBounds(allPoints.map((p) => L.latLng(p[0], p[1])));
+          map.fitBounds(bounds, { padding: [50, 50], maxZoom: 14 });
+          hasFitBoundsRef.current = true;
         }
       }
     });
   }, [locations, mapReady]);
+
+  // Draw trail polylines
+  useEffect(() => {
+    if (!mapReady || !leafletMapRef.current) return;
+
+    import('leaflet').then((L) => {
+      const map = leafletMapRef.current!;
+
+      for (const [driverId, points] of Object.entries(trails)) {
+        if (points.length < 2) continue;
+
+        // Find driver name for color
+        const loc = locations.find((l) => l.driver_id === driverId);
+        const name = (loc?.driver as unknown as { name: string })?.name || 'Driver';
+        const color = getDriverColor(name);
+
+        // Remove old polyline
+        if (trailLinesRef.current[driverId]) {
+          map.removeLayer(trailLinesRef.current[driverId]);
+        }
+
+        const polyline = L.polyline(
+          points.map((p) => L.latLng(p[0], p[1])),
+          {
+            color: color,
+            weight: 3,
+            opacity: 0.4,
+            smoothFactor: 1,
+            dashArray: '6, 8',
+          }
+        ).addTo(map);
+
+        trailLinesRef.current[driverId] = polyline;
+      }
+    });
+  }, [trails, locations, mapReady]);
+
+  // Draw completed delivery markers
+  useEffect(() => {
+    if (!mapReady || !leafletMapRef.current) return;
+
+    import('leaflet').then((L) => {
+      const map = leafletMapRef.current!;
+
+      // Clear old delivery markers
+      for (const m of deliveryMarkersRef.current) {
+        map.removeLayer(m);
+      }
+      deliveryMarkersRef.current = [];
+
+      for (const route of routes) {
+        for (const stop of route.stops) {
+          if (stop.gps_lat == null || stop.gps_lng == null) continue;
+          if (!stop.completed_at) continue;
+
+          const customerName = stop.invoice?.customer_name || 'Unknown';
+          const invoiceNumber = stop.invoice?.invoice_number || 'N/A';
+          const dwellMinutes =
+            stop.dwell_seconds != null ? Math.round(stop.dwell_seconds / 60) : null;
+          const deliveryTime = stop.completed_at ? formatTime(stop.completed_at) : '—';
+
+          const deliveryIcon = L.divIcon({
+            className: '',
+            html: `<div style="
+              width: 24px; height: 24px; border-radius: 50%;
+              background: #22c55e; border: 2px solid #fff;
+              box-shadow: 0 1px 5px rgba(0,0,0,0.2);
+              display: flex; align-items: center; justify-content: center;
+              color: #fff; font-size: 13px; font-weight: 700; line-height: 1;
+            ">&#10003;</div>`,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12],
+          });
+
+          const hasPod = !!stop.pod_pdf_storage_path;
+          const podPdfUrl = hasPod
+            ? `${SUPABASE_URL}/storage/v1/object/public/pods/${stop.pod_pdf_storage_path}`
+            : '';
+
+          // Build popup as real DOM so event listeners work (inline onclick blocked by CSP)
+          const container = document.createElement('div');
+          container.style.cssText = 'font-family: -apple-system, sans-serif; min-width: 180px;';
+
+          const nameEl = document.createElement('div');
+          nameEl.style.cssText = 'font-size: 14px; font-weight: 700; margin-bottom: 4px; color: #1a1a1a;';
+          nameEl.textContent = customerName;
+          container.appendChild(nameEl);
+
+          const invEl = document.createElement('div');
+          invEl.style.cssText = 'font-size: 12px; color: #555; margin-bottom: 6px;';
+          invEl.textContent = `INV #${invoiceNumber}`;
+          container.appendChild(invEl);
+
+          const metaEl = document.createElement('div');
+          metaEl.style.cssText = 'display: flex; gap: 12px; font-size: 11px; color: #666; margin-bottom: 6px;';
+          if (dwellMinutes != null) {
+            const dwellSpan = document.createElement('span');
+            dwellSpan.innerHTML = `Dwell: <b>${dwellMinutes} min</b>`;
+            metaEl.appendChild(dwellSpan);
+          }
+          const timeSpan = document.createElement('span');
+          timeSpan.innerHTML = `Delivered: <b>${deliveryTime}</b>`;
+          metaEl.appendChild(timeSpan);
+          container.appendChild(metaEl);
+
+          if (hasPod) {
+            const btn = document.createElement('button');
+            btn.textContent = 'View POD →';
+            btn.style.cssText = 'font-size: 12px; font-weight: 600; color: #007aff; background: rgba(0,122,255,0.08); border: none; padding: 6px 14px; border-radius: 8px; cursor: pointer; margin-top: 2px;';
+            btn.addEventListener('click', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setPodViewer({ url: podPdfUrl, customer: customerName, invoice: invoiceNumber });
+            });
+            container.appendChild(btn);
+          }
+
+          const marker = L.marker([stop.gps_lat, stop.gps_lng], { icon: deliveryIcon })
+            .bindPopup(container, { maxWidth: 240 })
+            .addTo(map);
+
+          deliveryMarkersRef.current.push(marker);
+        }
+      }
+    });
+  }, [routes, mapReady]);
 
   return (
     <div
@@ -260,102 +557,101 @@ export default function LiveMap() {
         position: 'relative',
       }}
     >
-      {/* Header */}
-      <div
-        style={{
-          padding: '18px 24px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          borderBottom: '1px solid var(--border)',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div
-            style={{
-              width: 40, height: 40, borderRadius: 12,
-              background: 'rgba(52,199,89,0.1)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#34c759" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="10" r="3" />
-              <path d="M12 2a8 8 0 0 0-8 8c0 5.4 7.05 11.5 7.35 11.76a1 1 0 0 0 1.3 0C12.95 21.5 20 15.4 20 10a8 8 0 0 0-8-8z" />
-            </svg>
-          </div>
-          <div>
-            <h3 style={{ fontSize: 17, fontWeight: 700, color: 'var(--foreground)', margin: 0 }}>
-              Live Tracking
-            </h3>
-            <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0, marginTop: 2 }}>
-              {locations.length} driver{locations.length !== 1 ? 's' : ''} active
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Driver activity cards */}
-      {locations.length > 0 && (
-        <div style={{ display: 'flex', gap: 12, padding: '14px 20px', borderBottom: '1px solid var(--border)', overflowX: 'auto' }}>
-          {locations.map((loc) => {
-            const name = (loc.driver as unknown as { name: string })?.name || 'Driver';
-            const color = getDriverColor(name);
-            const act = activityLabel(loc.activity);
-            return (
-              <div
-                key={loc.driver_id}
-                style={{
-                  flex: '1 0 auto',
-                  minWidth: 180,
-                  background: 'var(--background)',
-                  borderRadius: 14,
-                  padding: '14px 16px',
-                  display: 'flex', alignItems: 'center', gap: 12,
-                }}
-              >
-                <div style={{
-                  width: 36, height: 36, borderRadius: '50%',
-                  background: color,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: '#fff', fontSize: 16, fontWeight: 700, flexShrink: 0,
-                }}>
-                  {name.charAt(0)}
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <p style={{ fontSize: 14, fontWeight: 700, color: 'var(--foreground)', margin: 0 }}>
-                    {name}
-                  </p>
-                  <div style={{
-                    display: 'inline-block',
-                    marginTop: 3,
-                    padding: '2px 8px',
-                    borderRadius: 6,
-                    fontSize: 11,
-                    fontWeight: 600,
-                    background: act.bgColor,
-                    color: act.color,
-                    whiteSpace: 'nowrap',
-                  }}>
-                    {act.text}
-                  </div>
-                  <p style={{ fontSize: 11, color: 'var(--muted)', margin: 0, marginTop: 3 }}>
-                    {timeAgo(loc.recorded_at)}
-                  </p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
       {/* Map */}
       <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-      <div ref={mapRef} style={{ height: 380, width: '100%' }} />
+      <div ref={mapRef} style={{ height: 500, width: '100%' }} />
+
+      {/* POD Viewer Modal */}
+      {podViewer && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 9999,
+            background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            animation: 'podFadeIn 0.2s ease-out',
+          }}
+          onClick={() => setPodViewer(null)}
+        >
+          <div
+            style={{
+              background: '#fff', borderRadius: 20, overflow: 'hidden',
+              width: '90%', maxWidth: 800, height: '85vh',
+              display: 'flex', flexDirection: 'column',
+              boxShadow: '0 24px 80px rgba(0,0,0,0.3)',
+              animation: 'podSlideUp 0.25s ease-out',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{
+              padding: '16px 20px', borderBottom: '1px solid #eee',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              flexShrink: 0,
+            }}>
+              <div>
+                <p style={{ fontSize: 16, fontWeight: 700, color: '#1a1a1a', margin: 0 }}>
+                  Proof of Delivery
+                </p>
+                <p style={{ fontSize: 13, color: '#666', margin: 0, marginTop: 2 }}>
+                  {podViewer.customer} · INV #{podViewer.invoice}
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <a
+                  href={podViewer.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    padding: '8px 14px', borderRadius: 10, fontSize: 13, fontWeight: 600,
+                    color: '#007aff', background: 'rgba(0,122,255,0.08)',
+                    textDecoration: 'none', border: 'none', cursor: 'pointer',
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#007aff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  Download
+                </a>
+                <button
+                  onClick={() => setPodViewer(null)}
+                  style={{
+                    width: 36, height: 36, borderRadius: 10, border: 'none',
+                    background: 'rgba(0,0,0,0.05)', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 18, color: '#666',
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            {/* PDF */}
+            <div style={{ flex: 1, background: '#f5f5f5' }}>
+              <iframe
+                src={podViewer.url}
+                style={{ width: '100%', height: '100%', border: 'none' }}
+                title="Proof of Delivery PDF"
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         @keyframes pulse-ring {
           0% { transform: scale(1); opacity: 1; }
           100% { transform: scale(1.6); opacity: 0; }
+        }
+        @keyframes podFadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes podSlideUp {
+          from { opacity: 0; transform: translateY(20px) scale(0.97); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
         }
       `}</style>
     </div>

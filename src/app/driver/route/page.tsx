@@ -253,11 +253,12 @@ function StopDetailSheet({ stops, onClose, onDeliver }: { stops: StopWithInvoice
           {(!isCompleted || showTab === 'invoice') && (
             <>
               {pdfUrl && (
-                <div className="mb-5 overflow-hidden rounded-2xl border border-border">
+                <div className="mb-5 overflow-hidden rounded-2xl border border-border" style={{ touchAction: 'pinch-zoom pan-x pan-y' }}>
                   <iframe
                     src={`${pdfUrl}#toolbar=0&navpanes=0&view=FitH`}
                     className="h-[400px] w-full border-0"
                     title="Invoice preview"
+                    style={{ touchAction: 'auto' }}
                   />
                 </div>
               )}

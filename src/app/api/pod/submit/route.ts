@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
 import { generatePodPdf } from '@/lib/pdf-generate';
 import { uploadPodToDrive } from '@/lib/google-drive';
+import { logActivity } from '@/lib/activity';
 
 export const maxDuration = 30;
 
@@ -13,6 +14,7 @@ export async function POST(request: NextRequest) {
   const signatureDataUrl = (formData.get('signatureDataUrl') ?? formData.get('signature')) as string | null;
   const photoFile = (formData.get('photoFile') ?? formData.get('photo')) as File | null;
   const notesInput = formData.get('notes') as string | null;
+  const backorderNotes = formData.get('backorder_notes') as string | null;
   const gpsLat = formData.get('gps_lat') as string | null;
   const gpsLng = formData.get('gps_lng') as string | null;
 
@@ -157,6 +159,7 @@ export async function POST(request: NextRequest) {
       dwell_seconds: dwellSeconds,
       gps_lat: gpsLat ? parseFloat(gpsLat) : null,
       gps_lng: gpsLng ? parseFloat(gpsLng) : null,
+      backorder_notes: backorderNotes || null,
     })
     .eq('id', stopId);
 
@@ -190,7 +193,25 @@ export async function POST(request: NextRequest) {
       .eq('id', stop.route_id);
   }
 
-  // l. Return success
+  // l. Log activity events
+  const logBase = {
+    driver_id: driver.id,
+    driver_name: driver.name,
+    stop_id: stopId,
+    customer_name: invoice.customer_name || undefined,
+    invoice_number: invoice.invoice_number || undefined,
+  };
+
+  await logActivity({ ...logBase, event_type: 'photo_captured', message: `${driver.name} captured delivery photo at ${invoice.customer_name}` });
+  await logActivity({ ...logBase, event_type: 'signature_confirmed', message: `${driver.name} collected signature from ${invoice.customer_name}` });
+  await logActivity({ ...logBase, event_type: 'pod_submitted', message: `${driver.name} submitted proof of delivery for INV #${invoice.invoice_number}` });
+  await logActivity({ ...logBase, event_type: 'delivery_completed', message: `${driver.name} completed delivery to ${invoice.customer_name}` });
+
+  if (allCompleted) {
+    await logActivity({ ...logBase, event_type: 'route_completed', message: `${driver.name} completed all deliveries for today` });
+  }
+
+  // m. Return success
   const filename = `${invoice.invoice_number}.pdf`;
   return NextResponse.json({ success: true, googleDriveFileId, filename, driveError: googleDriveFileId ? null : 'Drive upload failed — check logs' });
 }

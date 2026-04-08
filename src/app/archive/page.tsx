@@ -9,12 +9,14 @@ interface ArchiveRow {
   customer_name: string | null;
   driver_name: string | null;
   completed_at: string | null;
-  status: string;
   pod_pdf_storage_path: string | null;
+  signature_storage_path: string | null;
+  photo_storage_path: string | null;
+  backorder_notes: string | null;
+  dwell_seconds: number | null;
 }
 
-const SUPABASE_POD_BASE =
-  'https://lmyoqbzmjzgbjpunnfxy.supabase.co/storage/v1/object/public/pods/';
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -34,20 +36,21 @@ export default function ArchivePage() {
   const [dateTo, setDateTo] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
+  const [podViewer, setPodViewer] = useState<{ url: string; customer: string; invoice: string } | null>(null);
 
   const fetchArchive = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ status: 'delivered' });
+      const params = new URLSearchParams();
       if (search) params.set('search', search);
       if (dateFrom) params.set('date_from', dateFrom);
       if (dateTo) params.set('date_to', dateTo);
 
-      const res = await fetch(`/api/invoices?${params.toString()}`);
+      const res = await fetch(`/api/archive?${params.toString()}`);
       if (!res.ok) throw new Error('Failed to load archive');
       const data = await res.json();
-      setRows(data.invoices ?? data ?? []);
+      setRows(Array.isArray(data) ? data : []);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load');
     } finally {
@@ -611,10 +614,12 @@ export default function ArchivePage() {
                     {/* View POD button */}
                     <div style={{ flexShrink: 0 }}>
                       {row.pod_pdf_storage_path ? (
-                        <a
-                          href={`${SUPABASE_POD_BASE}${row.pod_pdf_storage_path}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
+                          onClick={() => setPodViewer({
+                            url: `${SUPABASE_URL}/storage/v1/object/public/pods/${row.pod_pdf_storage_path}`,
+                            customer: row.customer_name || 'Unknown',
+                            invoice: row.invoice_number,
+                          })}
                           style={{
                             display: 'inline-flex',
                             alignItems: 'center',
@@ -625,7 +630,9 @@ export default function ArchivePage() {
                             fontWeight: 600,
                             padding: '8px 16px',
                             borderRadius: 100,
-                            textDecoration: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontFamily: 'inherit',
                             transition: 'background 0.2s ease',
                             whiteSpace: 'nowrap',
                           }}
@@ -644,7 +651,7 @@ export default function ArchivePage() {
                             <polyline points="14 2 14 8 20 8" />
                           </svg>
                           View POD
-                        </a>
+                        </button>
                       ) : (
                         <span
                           style={{
@@ -681,9 +688,96 @@ export default function ArchivePage() {
         )}
       </main>
 
+      {/* POD Viewer Modal */}
+      {podViewer && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 9999,
+            background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            animation: 'podFadeIn 0.2s ease-out',
+          }}
+          onClick={() => setPodViewer(null)}
+        >
+          <div
+            style={{
+              background: '#fff', borderRadius: 20, overflow: 'hidden',
+              width: '90%', maxWidth: 800, height: '85vh',
+              display: 'flex', flexDirection: 'column',
+              boxShadow: '0 24px 80px rgba(0,0,0,0.3)',
+              animation: 'podSlideUp 0.25s ease-out',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{
+              padding: '16px 20px', borderBottom: '1px solid #eee',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              flexShrink: 0,
+            }}>
+              <div>
+                <p style={{ fontSize: 16, fontWeight: 700, color: '#1a1a1a', margin: 0 }}>
+                  Proof of Delivery
+                </p>
+                <p style={{ fontSize: 13, color: '#666', margin: 0, marginTop: 2 }}>
+                  {podViewer.customer} · INV #{podViewer.invoice}
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <a
+                  href={podViewer.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    padding: '8px 14px', borderRadius: 10, fontSize: 13, fontWeight: 600,
+                    color: '#007aff', background: 'rgba(0,122,255,0.08)',
+                    textDecoration: 'none', border: 'none', cursor: 'pointer',
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#007aff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  Download
+                </a>
+                <button
+                  onClick={() => setPodViewer(null)}
+                  style={{
+                    width: 36, height: 36, borderRadius: 10, border: 'none',
+                    background: 'rgba(0,0,0,0.05)', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 18, color: '#666',
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            {/* PDF */}
+            <div style={{ flex: 1, background: '#f5f5f5' }}>
+              <iframe
+                src={podViewer.url}
+                style={{ width: '100%', height: '100%', border: 'none' }}
+                title="Proof of Delivery PDF"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`
         @keyframes spin {
           to { transform: rotate(360deg); }
+        }
+        @keyframes podFadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes podSlideUp {
+          from { opacity: 0; transform: translateY(20px) scale(0.97); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
         }
       `}</style>
     </div>
