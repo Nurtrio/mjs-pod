@@ -823,18 +823,36 @@ export default function DriverRoutePage() {
                             </div>
                           )}
                           {/* Stop number */}
-                          <div
-                            className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-[20px] font-bold"
-                            style={{ backgroundColor: gIdx === 0 && !editMode ? '#f5c518' : '#1a1a1a', color: gIdx === 0 && !editMode ? '#1a1a1a' : '#f5c518' }}
-                          >
-                            {firstStop.stop_order}
-                          </div>
+                          {(() => {
+                            const isPickup = firstStop.stop_type === 'pickup' || firstStop.invoice?.ticket_type === 'pickup';
+                            return (
+                              <div
+                                className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-[20px] font-bold"
+                                style={{
+                                  backgroundColor: isPickup ? '#ff9500' : (gIdx === 0 && !editMode ? '#f5c518' : '#1a1a1a'),
+                                  color: isPickup ? '#fff' : (gIdx === 0 && !editMode ? '#1a1a1a' : '#f5c518'),
+                                }}
+                              >
+                                {isPickup ? (
+                                  <svg width="24" height="24" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a1 1 0 011 1v5h5a1 1 0 110 2H9v5a1 1 0 11-2 0V9H2a1 1 0 010-2h5V2a1 1 0 011-1z"/></svg>
+                                ) : firstStop.stop_order}
+                              </div>
+                            );
+                          })()}
                           {/* Info */}
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-3">
                               <p className="text-[24px] font-bold text-foreground">
                                 {group.customerName || 'Unknown Customer'}
                               </p>
+                              {(firstStop.stop_type === 'pickup' || firstStop.invoice?.ticket_type === 'pickup') && (
+                                <span
+                                  className="inline-flex items-center rounded-full px-3 py-1 text-[12px] font-bold uppercase tracking-wider"
+                                  style={{ background: 'rgba(255,149,0,0.15)', color: '#ff9500' }}
+                                >
+                                  Pickup
+                                </span>
+                              )}
                               {isMulti && (
                                 <span
                                   className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[13px] font-bold"

@@ -17,6 +17,7 @@ export async function POST(request: NextRequest) {
   const manualInvoiceNumber = formData.get('invoice_number') as string | null;
   const manualCustomerName = formData.get('customer_name') as string | null;
   const manualCustomerAddress = formData.get('customer_address') as string | null;
+  const ticketType = (formData.get('ticket_type') as string) || 'delivery';
 
   if (!files || files.length === 0) {
     return NextResponse.json({ error: 'No PDF files provided' }, { status: 400 });
@@ -63,6 +64,7 @@ export async function POST(request: NextRequest) {
           customer_name: customerName,
           customer_address: customerAddress,
           pdf_storage_path: storagePath,
+          ticket_type: ticketType,
           status: 'unassigned',
         })
         .select()

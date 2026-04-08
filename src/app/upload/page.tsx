@@ -21,6 +21,7 @@ interface FileEntry {
   invoiceNumber: string;
   customerName: string;
   customerAddress: string;
+  ticketType: 'delivery' | 'pickup';
   uploaded: boolean;
   uploadedId?: string; // Supabase invoice ID after upload
   error: string | null;
@@ -100,7 +101,7 @@ export default function UploadPage() {
         const fromMatch = nameWithoutExt.match(/from[_\s]+(.+)/i);
         if (fromMatch) customerName = fromMatch[1].replace(/[_]+/g, ' ').trim();
         return {
-          file, invoiceNumber, customerName, customerAddress: '',
+          file, invoiceNumber, customerName, customerAddress: '', ticketType: 'delivery' as const,
           uploaded: false, error: null,
           previewUrl: URL.createObjectURL(file), extracting: true,
         };
@@ -133,6 +134,10 @@ export default function UploadPage() {
     [processFiles],
   );
 
+  const toggleTicketType = (idx: number) => {
+    setFiles((prev) => prev.map((f, i) => i === idx ? { ...f, ticketType: f.ticketType === 'delivery' ? 'pickup' : 'delivery' } : f));
+  };
+
   const updateField = (idx: number, field: 'invoiceNumber' | 'customerName' | 'customerAddress', value: string) => {
     setFiles((prev) => prev.map((f, i) => (i === idx ? { ...f, [field]: value } : f)));
   };
@@ -158,6 +163,7 @@ export default function UploadPage() {
       if (updated[i].customerAddress) {
         formData.append('customer_address', updated[i].customerAddress);
       }
+      formData.append('ticket_type', updated[i].ticketType || 'delivery');
 
       try {
         const res = await fetch('/api/invoices/upload', { method: 'POST', body: formData });
@@ -862,6 +868,37 @@ export default function UploadPage() {
                         />
                       </div>
                     </div>
+
+                    {/* Ticket Type Toggle */}
+                    {!entry.uploaded && (
+                      <div style={{ marginTop: 8 }}>
+                        <button
+                          type="button"
+                          onClick={() => toggleTicketType(idx)}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 6,
+                            padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                            fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+                            textTransform: 'uppercase', letterSpacing: '0.5px',
+                            background: entry.ticketType === 'pickup' ? 'rgba(255,149,0,0.12)' : 'rgba(0,122,255,0.08)',
+                            color: entry.ticketType === 'pickup' ? '#ff9500' : '#007aff',
+                            transition: 'all 0.2s ease',
+                          }}
+                        >
+                          {entry.ticketType === 'pickup' ? (
+                            <>
+                              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a1 1 0 011 1v5h5a1 1 0 110 2H9v5a1 1 0 11-2 0V9H2a1 1 0 010-2h5V2a1 1 0 011-1z"/></svg>
+                              Pickup
+                            </>
+                          ) : (
+                            <>
+                              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M2 13h12v1H2v-1zm5-11v7.586L4.707 7.293l-.707.707L8 12l4-4-.707-.707L9 9.586V2H7z"/></svg>
+                              Delivery
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

@@ -9,6 +9,7 @@ import type { Driver, Invoice, RouteStop, Route } from '@/types';
 interface DriverRoute {
   route: Route;
   stops: (RouteStop & { invoice: Invoice })[];
+  dirty: boolean;
 }
 
 export default function RoutesPage() {
@@ -59,6 +60,7 @@ export default function RoutesPage() {
             created_at: new Date().toISOString(),
           },
           stops: existingRoute?.stops ?? [],
+          dirty: false,
         };
       }
       setRoutes(routeMap);
@@ -84,12 +86,16 @@ export default function RoutesPage() {
     for (const dId of Object.keys(routes)) {
       const sIdx = routes[dId].stops.findIndex((s) => s.invoice_id === invoiceId);
       if (sIdx !== -1) {
-        const invoice = routes[dId].stops[sIdx].invoice;
+        const stop = routes[dId].stops[sIdx];
+        // Don't allow removing completed stops
+        if (stop.status === 'completed') return null;
+        const invoice = stop.invoice;
         setRoutes((prev) => ({
           ...prev,
           [dId]: {
             ...prev[dId],
             stops: prev[dId].stops.filter((s) => s.invoice_id !== invoiceId),
+            dirty: true,
           },
         }));
         return invoice;
@@ -112,6 +118,7 @@ export default function RoutesPage() {
         invoice_id: invoiceId,
         stop_order: driverRoute.stops.length + 1,
         status: 'pending',
+        stop_type: invoice.ticket_type || 'delivery',
         signature_storage_path: null,
         photo_storage_path: null,
         pod_pdf_storage_path: null,
@@ -131,6 +138,7 @@ export default function RoutesPage() {
         [driverId]: {
           ...driverRoute,
           stops: [...driverRoute.stops, newStop],
+          dirty: true,
         },
       };
     });
@@ -142,10 +150,38 @@ export default function RoutesPage() {
     setUnassigned((prev) => [...prev, invoice]);
   };
 
+  const handleRemoveStop = (driverId: string, invoiceId: string) => {
+    const driverRoute = routes[driverId];
+    if (!driverRoute) return;
+    const stop = driverRoute.stops.find((s) => s.invoice_id === invoiceId);
+    if (!stop || stop.status === 'completed') return;
+
+    setRoutes((prev) => ({
+      ...prev,
+      [driverId]: {
+        ...prev[driverId],
+        stops: prev[driverId].stops.filter((s) => s.invoice_id !== invoiceId),
+        dirty: true,
+      },
+    }));
+    setUnassigned((prev) => [...prev, stop.invoice]);
+  };
+
+  const dirtyCount = Object.values(routes).filter((r) => r.dirty).length;
+
   const saveRoutes = async () => {
     setSaving(true);
     try {
-      const payload = Object.entries(routes)
+      // Only save routes that were modified
+      const dirtyRoutes = Object.entries(routes).filter(([, val]) => val.dirty);
+
+      if (dirtyRoutes.length === 0) {
+        showToast('No changes to save');
+        setSaving(false);
+        return;
+      }
+
+      const payload = dirtyRoutes
         .filter(([, val]) => val.stops.length > 0)
         .map(([driverId, val]) => ({
           driver_id: driverId,
@@ -153,6 +189,7 @@ export default function RoutesPage() {
           stops: val.stops.map((s, i) => ({
             invoice_id: s.invoice_id,
             stop_order: i + 1,
+            stop_type: s.stop_type || 'delivery',
           })),
         }));
 
@@ -173,20 +210,20 @@ export default function RoutesPage() {
         throw new Error(err.error || 'Save failed');
       }
 
-      // Clear unassigned invoices from DB after saving routes
-      if (unassigned.length > 0) {
-        const unassignedIds = unassigned.map((inv) => inv.id);
-        try {
-          await fetch('/api/invoices/clear', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ invoice_ids: unassignedIds }),
-          });
-        } catch { /* best effort */ }
-        setUnassigned([]);
-      }
+      // Mark saved routes as clean
+      setRoutes((prev) => {
+        const updated = { ...prev };
+        for (const [dId] of dirtyRoutes) {
+          if (updated[dId]) {
+            updated[dId] = { ...updated[dId], dirty: false };
+          }
+        }
+        return updated;
+      });
 
-      showToast('Routes saved successfully!');
+      showToast(`Saved ${dirtyRoutes.length} route${dirtyRoutes.length > 1 ? 's' : ''}`);
+      // Refresh to get real IDs from server
+      await fetchData();
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Failed to save routes');
     } finally {
@@ -198,26 +235,50 @@ export default function RoutesPage() {
     const allInvoices = [...unassigned];
     for (const dId of Object.keys(routes)) {
       for (const stop of routes[dId].stops) {
-        allInvoices.push(stop.invoice);
+        // Only clear pending stops
+        if (stop.status !== 'completed') {
+          allInvoices.push(stop.invoice);
+        }
       }
     }
     setUnassigned(allInvoices);
     setRoutes((prev) => {
-      const empty = { ...prev };
-      for (const dId of Object.keys(empty)) {
-        empty[dId] = { ...empty[dId], stops: [] };
+      const updated = { ...prev };
+      for (const dId of Object.keys(updated)) {
+        const completedStops = updated[dId].stops.filter((s) => s.status === 'completed');
+        const hadPending = updated[dId].stops.length > completedStops.length;
+        updated[dId] = {
+          ...updated[dId],
+          stops: completedStops,
+          dirty: hadPending ? true : updated[dId].dirty,
+        };
       }
-      return empty;
+      return updated;
     });
     setConfirmClear(false);
-    showToast('All assignments cleared');
+    showToast('Pending assignments cleared');
+  };
+
+  const getRouteStatusLabel = (driverRoute: DriverRoute) => {
+    const routeStatus = driverRoute.route.status;
+    const completed = driverRoute.stops.filter((s) => s.status === 'completed').length;
+    const total = driverRoute.stops.length;
+
+    if (total === 0) return null;
+    if (routeStatus === 'completed' || (completed === total && total > 0)) {
+      return { label: 'Complete', color: '#34c759', bg: 'rgba(52,199,89,0.1)' };
+    }
+    if (routeStatus === 'in_progress' || completed > 0) {
+      return { label: `${completed}/${total} done`, color: '#007aff', bg: 'rgba(0,122,255,0.1)' };
+    }
+    return { label: `${total} stops`, color: '#8e8e93', bg: 'rgba(142,142,147,0.1)' };
   };
 
   return (
     <div className="flex min-h-screen flex-col" style={{ background: 'var(--background)' }}>
       <Nav />
 
-      {/* iOS Toast — top-center, frosted glass */}
+      {/* Toast */}
       {toast && (
         <div
           style={{
@@ -244,7 +305,7 @@ export default function RoutesPage() {
         </div>
       )}
 
-      {/* iOS Alert — Confirm Clear Dialog */}
+      {/* Confirm Clear Dialog */}
       {confirmClear && (
         <div
           style={{
@@ -270,47 +331,20 @@ export default function RoutesPage() {
             }}
           >
             <div style={{ padding: '24px 24px 20px', textAlign: 'center' }}>
-              <h3
-                style={{
-                  fontSize: 17,
-                  fontWeight: 600,
-                  color: 'var(--foreground)',
-                  margin: 0,
-                  marginBottom: 6,
-                }}
-              >
-                Clear All Assignments?
+              <h3 style={{ fontSize: 17, fontWeight: 600, color: 'var(--foreground)', margin: 0, marginBottom: 6 }}>
+                Clear Pending Assignments?
               </h3>
-              <p
-                style={{
-                  fontSize: 13,
-                  color: 'var(--muted)',
-                  margin: 0,
-                  lineHeight: 1.45,
-                }}
-              >
-                This will move all invoices back to the Unassigned pool. No data will be lost.
+              <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0, lineHeight: 1.45 }}>
+                This will move pending invoices back to Unassigned. Completed deliveries will not be affected.
               </p>
             </div>
-            <div
-              style={{
-                display: 'flex',
-                borderTop: '0.5px solid var(--separator)',
-              }}
-            >
+            <div style={{ display: 'flex', borderTop: '0.5px solid var(--separator)' }}>
               <button
                 onClick={() => setConfirmClear(false)}
                 style={{
-                  flex: 1,
-                  padding: '14px 0',
-                  background: 'transparent',
-                  border: 'none',
-                  borderRight: '0.5px solid var(--separator)',
-                  fontSize: 17,
-                  fontWeight: 400,
-                  color: 'var(--blue)',
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
+                  flex: 1, padding: '14px 0', background: 'transparent', border: 'none',
+                  borderRight: '0.5px solid var(--separator)', fontSize: 17, fontWeight: 400,
+                  color: 'var(--blue)', cursor: 'pointer', fontFamily: 'inherit',
                 }}
               >
                 Cancel
@@ -318,18 +352,11 @@ export default function RoutesPage() {
               <button
                 onClick={clearAll}
                 style={{
-                  flex: 1,
-                  padding: '14px 0',
-                  background: 'transparent',
-                  border: 'none',
-                  fontSize: 17,
-                  fontWeight: 600,
-                  color: 'var(--danger)',
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
+                  flex: 1, padding: '14px 0', background: 'transparent', border: 'none',
+                  fontSize: 17, fontWeight: 600, color: 'var(--danger)', cursor: 'pointer', fontFamily: 'inherit',
                 }}
               >
-                Clear All
+                Clear Pending
               </button>
             </div>
           </div>
@@ -337,27 +364,9 @@ export default function RoutesPage() {
       )}
 
       <main className="flex-1 px-5 pb-10 pt-6">
-        {/* Header — iOS nav bar style */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            marginBottom: 24,
-            flexWrap: 'wrap',
-            gap: 12,
-          }}
-        >
-          <h1
-            style={{
-              fontSize: 34,
-              fontWeight: 700,
-              letterSpacing: 0.37,
-              color: 'var(--foreground)',
-              lineHeight: 1.2,
-              margin: 0,
-            }}
-          >
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+          <h1 style={{ fontSize: 34, fontWeight: 700, letterSpacing: 0.37, color: 'var(--foreground)', lineHeight: 1.2, margin: 0 }}>
             Route Builder
           </h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
@@ -365,37 +374,26 @@ export default function RoutesPage() {
               onClick={() => setConfirmClear(true)}
               disabled={saving}
               style={{
-                background: 'transparent',
-                border: 'none',
-                fontSize: 17,
-                fontWeight: 400,
-                color: 'var(--danger)',
-                cursor: 'pointer',
-                padding: 0,
-                opacity: saving ? 0.4 : 1,
-                fontFamily: 'inherit',
+                background: 'transparent', border: 'none', fontSize: 17, fontWeight: 400,
+                color: 'var(--danger)', cursor: 'pointer', padding: 0,
+                opacity: saving ? 0.4 : 1, fontFamily: 'inherit',
               }}
             >
               Clear All
             </button>
             <button
               onClick={saveRoutes}
-              disabled={saving}
+              disabled={saving || dirtyCount === 0}
               className="ios-button"
               style={{
-                background: 'var(--accent)',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: 12,
-                padding: '10px 22px',
-                fontSize: 15,
-                fontWeight: 600,
-                cursor: saving ? 'default' : 'pointer',
-                opacity: saving ? 0.5 : 1,
-                fontFamily: 'inherit',
+                background: dirtyCount > 0 ? 'var(--accent)' : 'var(--muted-2)',
+                color: '#ffffff', border: 'none', borderRadius: 12, padding: '10px 22px',
+                fontSize: 15, fontWeight: 600, cursor: saving || dirtyCount === 0 ? 'default' : 'pointer',
+                opacity: saving ? 0.5 : 1, fontFamily: 'inherit',
+                transition: 'background 0.2s ease',
               }}
             >
-              {saving ? 'Saving...' : 'Save Routes'}
+              {saving ? 'Saving...' : dirtyCount > 0 ? `Save ${dirtyCount} Route${dirtyCount > 1 ? 's' : ''}` : 'Saved'}
             </button>
           </div>
         </div>
@@ -404,88 +402,35 @@ export default function RoutesPage() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '80px 0' }}>
             <div
               style={{
-                width: 28,
-                height: 28,
-                border: '2.5px solid var(--muted-2)',
-                borderTopColor: 'var(--accent)',
-                borderRadius: '50%',
-                animation: 'spin 0.8s linear infinite',
+                width: 28, height: 28, border: '2.5px solid var(--muted-2)',
+                borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite',
               }}
             />
           </div>
         ) : (
-          <div
-            style={{
-              display: 'flex',
-              gap: 16,
-              overflowX: 'auto',
-              paddingBottom: 16,
-            }}
-          >
-            {/* Unassigned Column — iOS grouped container */}
+          <div style={{ display: 'flex', gap: 16, overflowX: 'auto', paddingBottom: 16 }}>
+            {/* Unassigned Column */}
             <div
               style={{
-                width: 300,
-                flexShrink: 0,
-                display: 'flex',
-                flexDirection: 'column',
+                width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column',
                 background: isOverUnassigned ? 'rgba(52,199,89,0.04)' : 'var(--card)',
                 borderRadius: 16,
-                border: isOverUnassigned
-                  ? '1px solid rgba(52,199,89,0.35)'
-                  : '0.5px solid var(--border)',
+                border: isOverUnassigned ? '1px solid rgba(52,199,89,0.35)' : '0.5px solid var(--border)',
                 transition: 'all 0.2s ease',
-                boxShadow: isOverUnassigned
-                  ? '0 0 20px rgba(52,199,89,0.08)'
-                  : 'none',
+                boxShadow: isOverUnassigned ? '0 0 20px rgba(52,199,89,0.08)' : 'none',
               }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
-                setIsOverUnassigned(true);
-              }}
-              onDragLeave={(e) => {
-                if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-                  setIsOverUnassigned(false);
-                }
-              }}
+              onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setIsOverUnassigned(true); }}
+              onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsOverUnassigned(false); }}
               onDrop={(e) => {
-                e.preventDefault();
-                setIsOverUnassigned(false);
+                e.preventDefault(); setIsOverUnassigned(false);
                 const invoiceId = e.dataTransfer.getData('text/plain');
                 if (invoiceId) handleDropOnUnassigned(invoiceId);
               }}
             >
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '14px 18px',
-                  borderBottom: '0.5px solid var(--border)',
-                }}
-              >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '0.5px solid var(--border)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <h3
-                    style={{
-                      fontSize: 15,
-                      fontWeight: 600,
-                      color: 'var(--foreground)',
-                      margin: 0,
-                    }}
-                  >
-                    Unassigned
-                  </h3>
-                  <span
-                    style={{
-                      background: 'rgba(60,60,67,0.08)',
-                      color: 'var(--muted)',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      padding: '2px 10px',
-                      borderRadius: 100,
-                    }}
-                  >
+                  <h3 style={{ fontSize: 15, fontWeight: 600, color: 'var(--foreground)', margin: 0 }}>Unassigned</h3>
+                  <span style={{ background: 'rgba(60,60,67,0.08)', color: 'var(--muted)', fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 100 }}>
                     {unassigned.length}
                   </span>
                 </div>
@@ -495,55 +440,27 @@ export default function RoutesPage() {
                     onClick={async () => {
                       const ids = unassigned.map((inv) => inv.id);
                       try {
-                        await fetch('/api/invoices/clear', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ invoice_ids: ids }),
-                        });
+                        await fetch('/api/invoices/clear', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ invoice_ids: ids }) });
                       } catch { /* best effort */ }
                       setUnassigned([]);
                       showToast('Unassigned invoices cleared');
                     }}
                     style={{
-                      padding: '5px 12px',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      borderRadius: 8,
-                      border: 'none',
-                      cursor: 'pointer',
-                      fontFamily: 'inherit',
-                      background: 'rgba(255,59,48,0.08)',
-                      color: '#ff3b30',
+                      padding: '5px 12px', fontSize: 12, fontWeight: 600, borderRadius: 8,
+                      border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                      background: 'rgba(255,59,48,0.08)', color: '#ff3b30',
                     }}
                   >
                     Clear All
                   </button>
                 )}
               </div>
-              <div
-                style={{
-                  flex: 1,
-                  padding: 8,
-                  overflowY: 'auto',
-                  minHeight: 120,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 6,
-                }}
-              >
+              <div style={{ flex: 1, padding: 8, overflowY: 'auto', minHeight: 120, display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {unassigned.map((invoice) => (
                   <InvoiceCard key={invoice.id} invoice={invoice} />
                 ))}
                 {unassigned.length === 0 && (
-                  <p
-                    style={{
-                      textAlign: 'center',
-                      fontSize: 13,
-                      color: 'var(--muted-2)',
-                      padding: '32px 0',
-                      margin: 0,
-                    }}
-                  >
+                  <p style={{ textAlign: 'center', fontSize: 13, color: 'var(--muted-2)', padding: '32px 0', margin: 0 }}>
                     All invoices assigned
                   </p>
                 )}
@@ -553,23 +470,28 @@ export default function RoutesPage() {
             {/* Driver Columns */}
             {drivers
               .filter((d) => d.active)
-              .map((driver) => (
-                <DriverColumn
-                  key={driver.id}
-                  driverId={driver.id}
-                  driverName={driver.name}
-                  stops={routes[driver.id]?.stops ?? []}
-                  onDrop={handleDropOnDriver}
-                />
-              ))}
+              .map((driver) => {
+                const driverRoute = routes[driver.id];
+                const statusInfo = driverRoute ? getRouteStatusLabel(driverRoute) : null;
+                return (
+                  <DriverColumn
+                    key={driver.id}
+                    driverId={driver.id}
+                    driverName={driver.name}
+                    stops={driverRoute?.stops ?? []}
+                    dirty={driverRoute?.dirty ?? false}
+                    statusInfo={statusInfo}
+                    onDrop={handleDropOnDriver}
+                    onRemoveStop={handleRemoveStop}
+                  />
+                );
+              })}
           </div>
         )}
       </main>
 
       <style>{`
-        @keyframes spin {
-          to { transform: rotate(360deg); }
-        }
+        @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes slideDown {
           0% { opacity: 0; transform: translateX(-50%) translateY(-20px); }
           100% { opacity: 1; transform: translateX(-50%) translateY(0); }

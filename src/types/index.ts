@@ -12,6 +12,7 @@ export interface Invoice {
   customer_name: string | null;
   customer_address: string | null;
   pdf_storage_path: string | null;
+  ticket_type: 'delivery' | 'pickup';
   status: 'unassigned' | 'assigned' | 'in_progress' | 'delivered';
   created_at: string;
   uploaded_by: string | null;
@@ -43,6 +44,7 @@ export interface RouteStop {
   dwell_seconds: number | null;
   gps_lat: number | null;
   gps_lng: number | null;
+  stop_type: 'delivery' | 'pickup';
   notes: string | null;
   backorder_notes?: string | null;
   invoice?: Invoice;

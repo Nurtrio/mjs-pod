@@ -5,9 +5,12 @@ import type { Invoice } from '@/types';
 interface InvoiceCardProps {
   invoice: Invoice;
   stopNumber?: number;
+  stopType?: 'delivery' | 'pickup';
 }
 
-export default function InvoiceCard({ invoice, stopNumber }: InvoiceCardProps) {
+export default function InvoiceCard({ invoice, stopNumber, stopType }: InvoiceCardProps) {
+  const isPickup = stopType === 'pickup' || invoice.ticket_type === 'pickup';
+
   return (
     <div
       draggable
@@ -21,10 +24,11 @@ export default function InvoiceCard({ invoice, stopNumber }: InvoiceCardProps) {
         gap: 12,
         padding: '10px 12px',
         cursor: 'grab',
-        background: 'var(--background)',
+        background: isPickup ? 'rgba(255,149,0,0.06)' : 'var(--background)',
         borderRadius: 12,
         transition: 'transform 0.15s cubic-bezier(0.32,0.72,0,1), box-shadow 0.15s ease',
         boxShadow: '0 1px 4px rgba(0,0,0,0.04)',
+        borderLeft: isPickup ? '3px solid #ff9500' : 'none',
       }}
       onMouseDown={(e) => {
         (e.currentTarget as HTMLElement).style.transform = 'scale(0.97)';
@@ -47,8 +51,8 @@ export default function InvoiceCard({ invoice, stopNumber }: InvoiceCardProps) {
             width: 32,
             height: 32,
             borderRadius: 10,
-            background: 'rgba(0,122,255,0.1)',
-            color: 'var(--blue)',
+            background: isPickup ? 'rgba(255,149,0,0.15)' : 'rgba(0,122,255,0.1)',
+            color: isPickup ? '#ff9500' : 'var(--blue)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -56,35 +60,36 @@ export default function InvoiceCard({ invoice, stopNumber }: InvoiceCardProps) {
             fontWeight: 700,
           }}
         >
-          {stopNumber}
+          {isPickup ? (
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M8 1a1 1 0 011 1v5h5a1 1 0 110 2H9v5a1 1 0 11-2 0V9H2a1 1 0 010-2h5V2a1 1 0 011-1z"/>
+            </svg>
+          ) : (
+            stopNumber
+          )}
         </span>
       )}
 
       {/* Invoice info */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span
-            style={{
-              fontSize: 16,
-              fontWeight: 700,
-              color: 'var(--foreground)',
-              letterSpacing: '-0.01em',
-            }}
-          >
+          <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--foreground)', letterSpacing: '-0.01em' }}>
             {invoice.invoice_number}
           </span>
+          {isPickup && (
+            <span style={{
+              fontSize: 10, fontWeight: 700, color: '#ff9500',
+              background: 'rgba(255,149,0,0.12)', padding: '2px 6px',
+              borderRadius: 4, textTransform: 'uppercase', letterSpacing: '0.5px',
+            }}>
+              Pickup
+            </span>
+          )}
         </div>
-        <p
-          style={{
-            margin: '2px 0 0',
-            fontSize: 14,
-            fontWeight: 500,
-            color: 'var(--muted)',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
+        <p style={{
+          margin: '2px 0 0', fontSize: 14, fontWeight: 500, color: 'var(--muted)',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
           {invoice.customer_name || 'No customer name'}
         </p>
       </div>

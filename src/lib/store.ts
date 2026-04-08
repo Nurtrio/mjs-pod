@@ -70,6 +70,7 @@ export const useRouteBuilder = create<RouteBuilderState>((set) => ({
           dwell_seconds: null,
           gps_lat: null,
           gps_lng: null,
+          stop_type: invoice.ticket_type || 'delivery',
           notes: null,
           invoice,
         };
