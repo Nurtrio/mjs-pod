@@ -3,25 +3,23 @@ import { createServerClient } from '@/lib/supabase/server';
 import { sendEmail } from '@/lib/email';
 import { buildBackorderSummaryHtml } from '@/lib/email-templates';
 
-export async function POST(request: NextRequest) {
-  const supabase = createServerClient();
+export const maxDuration = 60;
 
-  // Optional: pass a date, default to today
-  let date: string;
-  let toOverride: string | null = null;
-  try {
-    const body = await request.json();
-    date = body.date || new Date().toISOString().split('T')[0];
-    if (body.to) toOverride = body.to;
-  } catch {
-    date = new Date().toISOString().split('T')[0];
+export async function GET(request: NextRequest) {
+  // Verify cron secret in production (Vercel sets this header automatically)
+  const authHeader = request.headers.get('authorization');
+  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Fetch all routes for the date with stops, invoices, drivers
+  const supabase = createServerClient();
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+
+  // Fetch all routes for today with stops, invoices, drivers
   const { data: routes, error } = await supabase
     .from('routes')
     .select('*, driver:drivers(*), stops:route_stops(*, invoice:invoices(*))')
-    .eq('route_date', date);
+    .eq('route_date', today);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -77,8 +75,13 @@ export async function POST(request: NextRequest) {
     });
   }
 
+  // Skip email if no routes/deliveries today
+  if ((routes ?? []).length === 0) {
+    return NextResponse.json({ skipped: true, reason: 'No routes today' });
+  }
+
   const summaryData = {
-    date,
+    date: today,
     totalDelivered,
     totalBackorders: backorders.length,
     totalDrivers: driverMap.size,
@@ -88,14 +91,20 @@ export async function POST(request: NextRequest) {
   };
 
   const html = buildBackorderSummaryHtml(summaryData);
-  const subject = `MJS Daily Backorder Summary — ${new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}`;
+  const subject = `MJS Daily Delivery Report — ${new Date(today + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}`;
 
-  // Send to configured recipient(s)
-  const recipient = toOverride || process.env.BACKORDER_SUMMARY_EMAIL || 'Nick@mobilejanitorialsupply.com';
+  const recipient = process.env.BACKORDER_SUMMARY_EMAIL || 'Nick@mobilejanitorialsupply.com';
 
   try {
     await sendEmail({ to: recipient, subject, html });
-    return NextResponse.json({ success: true, sent_to: recipient, backorders: backorders.length });
+    return NextResponse.json({
+      success: true,
+      sent_to: recipient,
+      date: today,
+      delivered: totalDelivered,
+      backorders: backorders.length,
+      drivers: driverMap.size,
+    });
   } catch (emailErr) {
     return NextResponse.json(
       { error: `Email failed: ${emailErr instanceof Error ? emailErr.message : emailErr}` },
