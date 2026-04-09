@@ -517,15 +517,54 @@ export default function DriverRoutePage() {
     fetchRoute();
   }, [driver, router, fetchRoute]);
 
-  // Track known stop IDs so we can detect new ones
+  // Track known stop IDs — persisted in localStorage so we detect new stops after sleep/refresh
+  const getStoredStopIds = useCallback((): Set<string> => {
+    try {
+      const stored = localStorage.getItem(`mjs-known-stops-${driver?.id}`);
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch { return new Set(); }
+  }, [driver?.id]);
+
+  const saveStopIds = useCallback((ids: Set<string>) => {
+    if (!driver?.id) return;
+    try { localStorage.setItem(`mjs-known-stops-${driver.id}`, JSON.stringify([...ids])); } catch {}
+    knownStopIdsRef.current = ids;
+  }, [driver?.id]);
+
+  // When route data loads, check for new stops the driver hasn't seen yet
   useEffect(() => {
-    if (route?.stops) {
-      const ids = new Set(route.stops.map((s) => s.id));
-      knownStopIdsRef.current = ids;
+    if (!route?.stops || route.stops.length === 0) return;
+
+    const currentIds = new Set(route.stops.map((s) => s.id));
+    const known = getStoredStopIds();
+
+    // First load ever — just store IDs, no alert
+    if (known.size === 0) {
+      saveStopIds(currentIds);
+      knownStopIdsRef.current = currentIds;
+      return;
     }
-  }, [route]);
+
+    // Find stops that weren't there before
+    const newStops = route.stops.filter((s) => !known.has(s.id) && s.status !== 'completed');
+
+    if (newStops.length > 0) {
+      // Show alert for the first new stop found
+      const first = newStops[0];
+      const isPickup = first.stop_type === 'pickup' || first.invoice?.ticket_type === 'pickup';
+      setNewStopAlert({
+        customerName: first.invoice?.customer_name || 'a customer',
+        isPickup,
+      });
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+    }
+
+    // Update stored IDs to include everything current
+    saveStopIds(currentIds);
+  }, [route, getStoredStopIds, saveStopIds]);
 
   // Supabase Realtime — listen for new stops added to this driver's route
+  // Triggers a route refresh; the new-stop detection above handles the alert
   useEffect(() => {
     if (!route?.id || route.id.startsWith('new-')) return;
 
@@ -540,29 +579,8 @@ export default function DriverRoutePage() {
           table: 'route_stops',
           filter: `route_id=eq.${route.id}`,
         },
-        async (payload) => {
-          const newStop = payload.new as { id: string; invoice_id: string; stop_type?: string };
-          // Skip if we already know about this stop (e.g. from initial load)
-          if (knownStopIdsRef.current.has(newStop.id)) return;
-
-          // Fetch the invoice details for the alert message
-          let customerName = 'a customer';
-          let isPickup = newStop.stop_type === 'pickup';
-          try {
-            const { data: invoice } = await supabase
-              .from('invoices')
-              .select('customer_name, ticket_type')
-              .eq('id', newStop.invoice_id)
-              .single();
-            if (invoice?.customer_name) customerName = invoice.customer_name;
-            if (invoice?.ticket_type === 'pickup') isPickup = true;
-          } catch { /* use defaults */ }
-
-          // Show alert and vibrate
-          setNewStopAlert({ customerName, isPickup });
-          if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
-
-          // Refresh route data to include the new stop
+        () => {
+          // Just refresh — the route data change will trigger the alert logic
           fetchRoute();
         }
       )
@@ -572,6 +590,17 @@ export default function DriverRoutePage() {
       supabase.removeChannel(channel);
     };
   }, [route?.id, fetchRoute]);
+
+  // Also refresh when iPad wakes from sleep / app returns to foreground
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && driver) {
+        fetchRoute();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [driver, fetchRoute]);
 
   // Fetch ETAs when driver position or route changes
   useEffect(() => {
