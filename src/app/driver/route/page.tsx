@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useDriverStore } from '@/lib/store';
 import type { RouteWithDetails, RouteStop, Invoice } from '@/types';
 import { countDeliveryStops, countCompletedDeliveryStops } from '@/lib/route-utils';
+import { createClient } from '@/lib/supabase/client';
 
 type StopWithInvoice = RouteStop & { invoice: Invoice };
 
@@ -333,6 +334,10 @@ export default function DriverRoutePage() {
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressTriggered = useRef(false);
 
+  // New stop notification
+  const [newStopAlert, setNewStopAlert] = useState<{ customerName: string; isPickup: boolean } | null>(null);
+  const knownStopIdsRef = useRef<Set<string>>(new Set());
+
   // ETA tracking
   const [driverPos, setDriverPos] = useState<{ lat: number; lng: number } | null>(null);
   const [etas, setEtas] = useState<Record<string, { minutes: number | null; text: string | null; distance: string | null }>>({});
@@ -511,6 +516,62 @@ export default function DriverRoutePage() {
     }
     fetchRoute();
   }, [driver, router, fetchRoute]);
+
+  // Track known stop IDs so we can detect new ones
+  useEffect(() => {
+    if (route?.stops) {
+      const ids = new Set(route.stops.map((s) => s.id));
+      knownStopIdsRef.current = ids;
+    }
+  }, [route]);
+
+  // Supabase Realtime — listen for new stops added to this driver's route
+  useEffect(() => {
+    if (!route?.id || route.id.startsWith('new-')) return;
+
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`route-stops-${route.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'route_stops',
+          filter: `route_id=eq.${route.id}`,
+        },
+        async (payload) => {
+          const newStop = payload.new as { id: string; invoice_id: string; stop_type?: string };
+          // Skip if we already know about this stop (e.g. from initial load)
+          if (knownStopIdsRef.current.has(newStop.id)) return;
+
+          // Fetch the invoice details for the alert message
+          let customerName = 'a customer';
+          let isPickup = newStop.stop_type === 'pickup';
+          try {
+            const { data: invoice } = await supabase
+              .from('invoices')
+              .select('customer_name, ticket_type')
+              .eq('id', newStop.invoice_id)
+              .single();
+            if (invoice?.customer_name) customerName = invoice.customer_name;
+            if (invoice?.ticket_type === 'pickup') isPickup = true;
+          } catch { /* use defaults */ }
+
+          // Show alert and vibrate
+          setNewStopAlert({ customerName, isPickup });
+          if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+
+          // Refresh route data to include the new stop
+          fetchRoute();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [route?.id, fetchRoute]);
 
   // Fetch ETAs when driver position or route changes
   useEffect(() => {
@@ -999,6 +1060,61 @@ export default function DriverRoutePage() {
           </button>
         </div>
       </div>
+
+      {/* New Stop Alert */}
+      {newStopAlert && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}
+        >
+          <div
+            className="mx-6 w-full max-w-sm overflow-hidden rounded-[24px] bg-card"
+            style={{ animation: 'spring-in 0.35s cubic-bezier(0.32,0.72,0,1)', boxShadow: '0 24px 80px rgba(0,0,0,0.25)' }}
+          >
+            <div className="flex flex-col items-center px-8 pt-8 pb-6 text-center">
+              {/* Icon */}
+              <div
+                className="mb-5 flex h-20 w-20 items-center justify-center rounded-full"
+                style={{ background: newStopAlert.isPickup ? 'rgba(255,149,0,0.12)' : 'rgba(52,199,89,0.12)' }}
+              >
+                {newStopAlert.isPickup ? (
+                  <svg width="36" height="36" viewBox="0 0 16 16" fill="#ff9500"><path d="M8 1a1 1 0 011 1v5h5a1 1 0 110 2H9v5a1 1 0 11-2 0V9H2a1 1 0 010-2h5V2a1 1 0 011-1z"/></svg>
+                ) : (
+                  <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#34c759" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="1" y="3" width="15" height="13" rx="2" /><path d="M16 8h4l3 3v5h-7V8z" /><circle cx="5.5" cy="18.5" r="2.5" /><circle cx="18.5" cy="18.5" r="2.5" />
+                  </svg>
+                )}
+              </div>
+
+              {/* Title */}
+              <h2 className="text-[22px] font-bold text-foreground">
+                {newStopAlert.isPickup ? 'New Pickup Added' : 'New Stop Added'}
+              </h2>
+
+              {/* Customer name */}
+              <p className="mt-3 text-[20px] font-semibold" style={{ color: newStopAlert.isPickup ? '#ff9500' : '#34c759' }}>
+                {newStopAlert.customerName}
+              </p>
+
+              <p className="mt-2 text-[15px] text-muted">
+                {newStopAlert.isPickup ? 'A pickup has been added to your route' : 'A new delivery has been added to your route'}
+              </p>
+            </div>
+
+            {/* OK button */}
+            <div className="border-t border-separator">
+              <button
+                type="button"
+                onClick={() => setNewStopAlert(null)}
+                className="w-full py-[18px] text-[19px] font-semibold transition-all duration-150 active:bg-background"
+                style={{ color: newStopAlert.isPickup ? '#ff9500' : '#34c759', WebkitTapHighlightColor: 'transparent' }}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Stop Detail Sheet */}
       {selectedGroup && (
