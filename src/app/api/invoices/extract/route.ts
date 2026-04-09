@@ -32,21 +32,26 @@ export async function POST(request: NextRequest) {
             },
             {
               type: 'text',
-              text: `Extract the invoice number and SHIP TO customer from this invoice/ticket PDF.
+              text: `Extract the invoice number and customer from this invoice/ticket PDF.
 
-Context: This is from Mobile Janitorial Supply (MJS). Our drivers deliver to the SHIP TO address, which is often different from the BILL TO / SOLD TO company.
+Context: This is from Mobile Janitorial Supply (MJS). There are two document types:
 
-CRITICAL PRIORITY — always use the SHIP TO information:
-- If the invoice has both "Bill To" and "Ship To" sections, ALWAYS use the SHIP TO name and address. Ignore the Bill To.
-- The "Ship To" / "Deliver To" name and address is where our driver is physically going. That is what we need.
-- "Bill To" / "Sold To" is just the billing entity — we do NOT want that name or address.
-- For pickup tickets: use the pickup location name and address (where goods are collected from).
-- "Mobile Janitorial Supply" is always the issuing company — never use it as the customer name.
+FOR DELIVERY INVOICES:
+- Use the SHIP TO name and address (where the driver is physically delivering to).
+- If the invoice has both "Bill To" and "Ship To", ALWAYS prefer SHIP TO — the Bill To is just billing, not the delivery destination.
+- Only fall back to Bill To if there is no Ship To section at all.
 
-Rules:
+FOR PICKUP TICKETS:
+- Use the BILL TO / SOLD TO name and address — that is the pickup customer location.
+- Pickup tickets usually only have the Bill To side filled out. Use it.
+
+BOTH TYPES:
+- "Mobile Janitorial Supply" is always the issuing company — NEVER use it as the customer name.
+- If the only name you see is "Mobile Janitorial Supply", look harder for another business name on the document.
 - The invoice number is typically a 5-7 digit number (e.g. 350601). It may appear after "Invoice #", "Invoice No.", "Ticket #", or similar labels.
-- customer_name = the SHIP TO company/business name (NOT the Bill To name)
-- customer_address = the SHIP TO street address (NOT the Bill To address)
+
+To determine document type: look for words like "Pick Up", "Pickup", "PU", or "Credit Memo" — those indicate a pickup ticket. Otherwise treat as delivery.
+
 - Return ONLY valid JSON, no markdown, no explanation.
 
 Return format:
