@@ -32,12 +32,18 @@ export async function POST(request: NextRequest) {
             },
             {
               type: 'text',
-              text: `Extract the invoice number and customer name from this invoice PDF.
+              text: `Extract the invoice number and customer information from this invoice/ticket PDF.
+
+Context: This is from Mobile Janitorial Supply (MJS). The document is either:
+A) A DELIVERY invoice — the customer is who goods are being SHIPPED TO / DELIVERED TO
+B) A PICKUP ticket — the customer is the location/company where goods are being PICKED UP FROM
 
 Rules:
-- The invoice number is typically a 5-7 digit number (e.g. 350601). It may appear after "Invoice #", "Invoice No.", or similar labels.
-- The customer name is the business or person being billed / shipped to. NOT the company issuing the invoice.
-- If you can find a delivery address, include it.
+- The invoice number is typically a 5-7 digit number (e.g. 350601). It may appear after "Invoice #", "Invoice No.", "Ticket #", or similar labels.
+- The customer name is the DESTINATION business — who the goods are going to (delivery) or being collected from (pickup). It is NOT "Mobile Janitorial Supply" — that is always the issuing company, never the customer.
+- If you see "Ship To", "Deliver To", "Sold To", "Pick Up From", "Location", or similar — that is the customer.
+- If the only company name you see is "Mobile Janitorial Supply", look harder for a different business name on the document (recipient, location, pickup site, etc.).
+- If you can find an address for the customer, include it.
 - Return ONLY valid JSON, no markdown, no explanation.
 
 Return format:
