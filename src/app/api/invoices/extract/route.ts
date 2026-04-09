@@ -32,18 +32,21 @@ export async function POST(request: NextRequest) {
             },
             {
               type: 'text',
-              text: `Extract the invoice number and customer information from this invoice/ticket PDF.
+              text: `Extract the invoice number and SHIP TO customer from this invoice/ticket PDF.
 
-Context: This is from Mobile Janitorial Supply (MJS). The document is either:
-A) A DELIVERY invoice — the customer is who goods are being SHIPPED TO / DELIVERED TO
-B) A PICKUP ticket — the customer is the location/company where goods are being PICKED UP FROM
+Context: This is from Mobile Janitorial Supply (MJS). Our drivers deliver to the SHIP TO address, which is often different from the BILL TO / SOLD TO company.
+
+CRITICAL PRIORITY — always use the SHIP TO information:
+- If the invoice has both "Bill To" and "Ship To" sections, ALWAYS use the SHIP TO name and address. Ignore the Bill To.
+- The "Ship To" / "Deliver To" name and address is where our driver is physically going. That is what we need.
+- "Bill To" / "Sold To" is just the billing entity — we do NOT want that name or address.
+- For pickup tickets: use the pickup location name and address (where goods are collected from).
+- "Mobile Janitorial Supply" is always the issuing company — never use it as the customer name.
 
 Rules:
 - The invoice number is typically a 5-7 digit number (e.g. 350601). It may appear after "Invoice #", "Invoice No.", "Ticket #", or similar labels.
-- The customer name is the DESTINATION business — who the goods are going to (delivery) or being collected from (pickup). It is NOT "Mobile Janitorial Supply" — that is always the issuing company, never the customer.
-- If you see "Ship To", "Deliver To", "Sold To", "Pick Up From", "Location", or similar — that is the customer.
-- If the only company name you see is "Mobile Janitorial Supply", look harder for a different business name on the document (recipient, location, pickup site, etc.).
-- If you can find an address for the customer, include it.
+- customer_name = the SHIP TO company/business name (NOT the Bill To name)
+- customer_address = the SHIP TO street address (NOT the Bill To address)
 - Return ONLY valid JSON, no markdown, no explanation.
 
 Return format:
