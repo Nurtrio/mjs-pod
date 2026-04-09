@@ -177,6 +177,7 @@ export default function DeliverPage() {
   const [backorderNotes, setBackorderNotes] = useState('');
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [podFilename, setPodFilename] = useState('');
+  const [nextSiblingStopId, setNextSiblingStopId] = useState<string | null>(null);
 
   // Load stop data
   useEffect(() => {
@@ -284,6 +285,36 @@ export default function DeliverPage() {
       const driverName = driver.name.replace(/\s+/g, '_');
       const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
       setPodFilename(result.filename || `INV-${invoiceNum}_${driverName}_${date}.pdf`);
+
+      // Check for sibling stops at the same customer (multi-invoice delivery)
+      try {
+        const routeRes = await fetch(`/api/routes?driver_id=${driver.id}`);
+        if (routeRes.ok) {
+          const routeData = await routeRes.json();
+          const routes = Array.isArray(routeData) ? routeData : routeData.routes ? routeData.routes : [routeData];
+          const todayISO = new Date().toISOString().slice(0, 10);
+          const todayRoute = routes.find((r: { route_date?: string }) => r.route_date?.slice(0, 10) === todayISO) || routes[0];
+          if (todayRoute?.stops) {
+            const currentAddr = (stop.invoice?.customer_address || '').trim().toLowerCase();
+            const currentName = (stop.invoice?.customer_name || '').trim().toLowerCase();
+            const matchKey = currentAddr || currentName;
+            const siblingPending = todayRoute.stops.filter((s: StopData) => {
+              if (s.id === stop.id) return false;
+              if (s.status === 'completed') return false;
+              const sAddr = (s.invoice?.customer_address || '').trim().toLowerCase();
+              const sName = (s.invoice?.customer_name || '').trim().toLowerCase();
+              const sKey = sAddr || sName;
+              return sKey === matchKey;
+            });
+            if (siblingPending.length > 0) {
+              setNextSiblingStopId(siblingPending[0].id);
+            }
+          }
+        }
+      } catch {
+        // Non-critical — just skip auto-advance
+      }
+
       setStep('success');
     } catch (e: unknown) {
       setSubmitError(e instanceof Error ? e.message : 'Submission failed');
@@ -702,17 +733,47 @@ export default function DeliverPage() {
           <h2 className="mb-3 text-[34px] font-bold text-accent">POD Submitted!</h2>
           <p className="mb-2 text-[19px] text-foreground">{customerName}</p>
           {podFilename && (
-            <p className="mb-12 max-w-md break-all text-center text-[14px] text-muted">{podFilename}</p>
+            <p className="mb-4 max-w-md break-all text-center text-[14px] text-muted">{podFilename}</p>
           )}
+          {nextSiblingStopId && (
+            <div className="mb-8 rounded-2xl px-6 py-4 text-center" style={{ background: 'rgba(255,149,0,0.1)', border: '1px solid rgba(255,149,0,0.25)' }}>
+              <p className="text-[16px] font-semibold" style={{ color: '#ff9500' }}>
+                More invoices at this stop
+              </p>
+              <p className="mt-1 text-[14px] text-muted">Next invoice is ready</p>
+            </div>
+          )}
+          {!nextSiblingStopId && <div className="mb-8" />}
         </div>
-        <button
-          type="button"
-          onClick={() => router.push('/driver/route')}
-          className="w-full max-w-md rounded-2xl bg-accent py-[20px] text-[20px] font-bold text-white shadow-[0_4px_16px_rgba(52,199,89,0.3)] transition-all duration-150 active:scale-[0.97]"
-          style={{ WebkitTapHighlightColor: 'transparent', height: 68 }}
-        >
-          Next Delivery
-        </button>
+        {nextSiblingStopId ? (
+          <div className="flex w-full max-w-md flex-col gap-3">
+            <button
+              type="button"
+              onClick={() => router.push(`/driver/deliver/${nextSiblingStopId}`)}
+              className="w-full rounded-2xl py-[20px] text-[20px] font-bold text-white shadow-[0_4px_16px_rgba(255,149,0,0.3)] transition-all duration-150 active:scale-[0.97]"
+              style={{ WebkitTapHighlightColor: 'transparent', height: 68, background: 'linear-gradient(135deg, #ff9500, #e68600)' }}
+            >
+              Next Invoice →
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push('/driver/route')}
+              className="w-full rounded-2xl bg-card py-[16px] text-[17px] font-semibold text-foreground transition-all duration-150 active:scale-[0.97]"
+              style={{ WebkitTapHighlightColor: 'transparent', boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}
+            >
+              Back to Route
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => router.push('/driver/route')}
+            className="w-full max-w-md rounded-2xl bg-accent py-[20px] text-[20px] font-bold text-white shadow-[0_4px_16px_rgba(52,199,89,0.3)] transition-all duration-150 active:scale-[0.97]"
+            style={{ WebkitTapHighlightColor: 'transparent', height: 68 }}
+          >
+            Next Delivery
+          </button>
+        )}
       </div>
     );
   }

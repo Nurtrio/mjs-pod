@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useDriverStore } from '@/lib/store';
 import type { RouteWithDetails, RouteStop, Invoice } from '@/types';
+import { countDeliveryStops, countCompletedDeliveryStops } from '@/lib/route-utils';
 
 type StopWithInvoice = RouteStop & { invoice: Invoice };
 
@@ -585,8 +586,9 @@ export default function DriverRoutePage() {
   if (!driver) return null;
 
   const stops: StopWithInvoice[] = route?.stops ?? [];
-  const completedCount = stops.filter((s) => s.status === 'completed').length;
-  const totalCount = stops.length;
+  // Grouped counts — multi-invoice customers = 1 delivery stop
+  const completedCount = countCompletedDeliveryStops(stops);
+  const totalCount = countDeliveryStops(stops);
   const pendingStops = stops.filter((s) => s.status !== 'completed');
   const completedStops = stops.filter((s) => s.status === 'completed');
 

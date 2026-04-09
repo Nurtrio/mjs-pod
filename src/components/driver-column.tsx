@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import InvoiceCard from './invoice-card';
 import type { Invoice, RouteStop } from '@/types';
+import { countDeliveryStops } from '@/lib/route-utils';
 
 interface DriverColumnProps {
   driverId: string;
@@ -70,7 +71,7 @@ export default function DriverColumn({ driverId, driverName, stops, dirty, statu
         <div style={{ padding: '8px 8px 0' }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', padding: '4px 8px 6px', display: 'flex', alignItems: 'center', gap: 6 }}>
             <svg width="12" height="12" viewBox="0 0 16 16" fill="#34c759"><path d="M8 0a8 8 0 110 16A8 8 0 018 0zm3.5 5.3a.75.75 0 00-1.06-1.06L7 7.69 5.56 6.25a.75.75 0 00-1.06 1.06l2 2a.75.75 0 001.06 0l4-4z"/></svg>
-            Completed ({completedStops.length})
+            Completed ({countDeliveryStops(completedStops)} stops)
           </div>
           {completedStops.map((stop, idx) => (
             <div key={stop.invoice_id} style={{ opacity: 0.55, pointerEvents: 'none', marginBottom: 6 }}>
@@ -84,7 +85,7 @@ export default function DriverColumn({ driverId, driverName, stops, dirty, statu
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 120, padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
         {completedStops.length > 0 && pendingStops.length > 0 && (
           <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', padding: '4px 8px 2px' }}>
-            Pending ({pendingStops.length})
+            Pending ({countDeliveryStops(pendingStops)} stops)
           </div>
         )}
         {pendingStops.map((stop, idx) => (

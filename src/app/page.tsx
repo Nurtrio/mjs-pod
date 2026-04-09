@@ -5,6 +5,7 @@ import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import Nav from '@/components/nav';
 import type { RouteWithDetails } from '@/types';
+import { countDeliveryStops, countCompletedDeliveryStops, groupStopsByCustomer } from '@/lib/route-utils';
 
 const LiveMap = dynamic(() => import('@/components/live-map'), { ssr: false });
 const ActivityFeed = dynamic(() => import('@/components/activity-feed'), { ssr: false });
@@ -135,9 +136,10 @@ export default function DashboardPage() {
     return () => clearInterval(t);
   }, []);
 
-  const totalStops = routes.reduce((sum, r) => sum + (r.stops?.length ?? 0), 0);
+  // Use grouped counts — multi-invoice customers = 1 delivery stop
+  const totalStops = routes.reduce((sum, r) => sum + countDeliveryStops(r.stops ?? []), 0);
   const completedStops = routes.reduce(
-    (sum, r) => sum + (r.stops?.filter((s) => s.status === 'completed').length ?? 0),
+    (sum, r) => sum + countCompletedDeliveryStops(r.stops ?? []),
     0,
   );
   const pendingStops = totalStops - completedStops;
@@ -386,8 +388,8 @@ export default function DashboardPage() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                   {routes.map((route) => {
                     const stops = route.stops ?? [];
-                    const done = stops.filter((s) => s.status === 'completed').length;
-                    const total = stops.length;
+                    const done = countCompletedDeliveryStops(stops);
+                    const total = countDeliveryStops(stops);
                     const pct = total > 0 ? Math.round((done / total) * 100) : 0;
                     const driverName = route.driver?.name ?? 'Unknown';
                     const driverColor = DRIVER_COLORS[driverName] ?? '#8b5cf6';
@@ -494,57 +496,65 @@ export default function DashboardPage() {
                           </div>
                         </div>
 
-                        {/* Full customer stop list */}
-                        {total > 0 && (
-                          <div style={{ padding: '0 24px 20px' }}>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 8px' }}>
-                              {stops.map((s, si) => {
-                                const isCompleted = s.status === 'completed';
-                                const hasBackorder = !!(s.backorder_notes && s.backorder_notes.trim());
-                                const custName = s.invoice?.customer_name || `Stop ${si + 1}`;
-                                return (
-                                  <div
-                                    key={s.id}
-                                    style={{
-                                      display: 'inline-flex', alignItems: 'center', gap: 6,
-                                      padding: '5px 12px', borderRadius: 8,
-                                      fontSize: 12, fontWeight: isCompleted ? 600 : 500,
-                                      background: hasBackorder
-                                        ? 'rgba(255,59,48,0.06)'
-                                        : isCompleted ? 'rgba(52,199,89,0.08)' : 'rgba(0,0,0,0.025)',
-                                      color: hasBackorder
-                                        ? '#ff3b30'
-                                        : isCompleted ? '#34c759' : 'var(--muted)',
-                                      textDecoration: isCompleted && !hasBackorder ? 'line-through' : 'none',
-                                      textDecorationColor: isCompleted ? 'rgba(52,199,89,0.3)' : 'transparent',
-                                      transition: 'all 0.3s ease',
-                                      border: hasBackorder ? '1px solid rgba(255,59,48,0.15)' : '1px solid transparent',
-                                    }}
-                                    title={hasBackorder ? `B/O: ${s.backorder_notes}` : undefined}
-                                  >
-                                    {hasBackorder ? (
-                                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#ff3b30" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-                                      </svg>
-                                    ) : isCompleted ? (
-                                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#34c759" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
-                                    ) : (
-                                      <span style={{
-                                        width: 18, height: 18, borderRadius: 5, fontSize: 10, fontWeight: 700,
-                                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                                        background: `${driverColor}12`, color: driverColor,
-                                      }}>{si + 1}</span>
-                                    )}
-                                    {custName}
-                                    {hasBackorder && (
-                                      <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>B/O</span>
-                                    )}
-                                  </div>
-                                );
-                              })}
+                        {/* Full customer stop list — grouped by customer */}
+                        {total > 0 && (() => {
+                          const groups = groupStopsByCustomer(stops);
+                          return (
+                            <div style={{ padding: '0 24px 20px' }}>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 8px' }}>
+                                {groups.map((group, gi) => {
+                                  const allCompleted = group.every((s) => s.status === 'completed');
+                                  const hasBackorder = group.some((s) => !!(s.backorder_notes && s.backorder_notes.trim()));
+                                  const custName = group[0].invoice?.customer_name || `Stop ${gi + 1}`;
+                                  const invoiceCount = group.length;
+                                  const boNotes = group.map((s) => s.backorder_notes).filter(Boolean).join('; ');
+                                  return (
+                                    <div
+                                      key={`group-${gi}`}
+                                      style={{
+                                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                                        padding: '5px 12px', borderRadius: 8,
+                                        fontSize: 12, fontWeight: allCompleted ? 600 : 500,
+                                        background: hasBackorder
+                                          ? 'rgba(255,59,48,0.06)'
+                                          : allCompleted ? 'rgba(52,199,89,0.08)' : 'rgba(0,0,0,0.025)',
+                                        color: hasBackorder
+                                          ? '#ff3b30'
+                                          : allCompleted ? '#34c759' : 'var(--muted)',
+                                        textDecoration: allCompleted && !hasBackorder ? 'line-through' : 'none',
+                                        textDecorationColor: allCompleted ? 'rgba(52,199,89,0.3)' : 'transparent',
+                                        transition: 'all 0.3s ease',
+                                        border: hasBackorder ? '1px solid rgba(255,59,48,0.15)' : '1px solid transparent',
+                                      }}
+                                      title={hasBackorder ? `B/O: ${boNotes}` : undefined}
+                                    >
+                                      {hasBackorder ? (
+                                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#ff3b30" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                                          <path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                                        </svg>
+                                      ) : allCompleted ? (
+                                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#34c759" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+                                      ) : (
+                                        <span style={{
+                                          width: 18, height: 18, borderRadius: 5, fontSize: 10, fontWeight: 700,
+                                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                          background: `${driverColor}12`, color: driverColor,
+                                        }}>{gi + 1}</span>
+                                      )}
+                                      {custName}
+                                      {invoiceCount > 1 && (
+                                        <span style={{ fontSize: 10, fontWeight: 700, color: '#ff9500' }}>×{invoiceCount}</span>
+                                      )}
+                                      {hasBackorder && (
+                                        <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>B/O</span>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             </div>
-                          </div>
-                        )}
+                          );
+                        })()}
                       </div>
                     );
                   })}

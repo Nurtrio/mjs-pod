@@ -5,6 +5,7 @@ import Nav from '@/components/nav';
 import InvoiceCard from '@/components/invoice-card';
 import DriverColumn from '@/components/driver-column';
 import type { Driver, Invoice, RouteStop, Route } from '@/types';
+import { countDeliveryStops, countCompletedDeliveryStops } from '@/lib/route-utils';
 
 interface DriverRoute {
   route: Route;
@@ -261,17 +262,18 @@ export default function RoutesPage() {
 
   const getRouteStatusLabel = (driverRoute: DriverRoute) => {
     const routeStatus = driverRoute.route.status;
-    const completed = driverRoute.stops.filter((s) => s.status === 'completed').length;
-    const total = driverRoute.stops.length;
+    // Use grouped counts — multi-invoice customers = 1 delivery stop
+    const totalStops = countDeliveryStops(driverRoute.stops);
+    const completedStops = countCompletedDeliveryStops(driverRoute.stops);
 
-    if (total === 0) return null;
-    if (routeStatus === 'completed' || (completed === total && total > 0)) {
+    if (totalStops === 0) return null;
+    if (routeStatus === 'completed' || (completedStops === totalStops && totalStops > 0)) {
       return { label: 'Complete', color: '#34c759', bg: 'rgba(52,199,89,0.1)' };
     }
-    if (routeStatus === 'in_progress' || completed > 0) {
-      return { label: `${completed}/${total} done`, color: '#007aff', bg: 'rgba(0,122,255,0.1)' };
+    if (routeStatus === 'in_progress' || completedStops > 0) {
+      return { label: `${completedStops}/${totalStops} done`, color: '#007aff', bg: 'rgba(0,122,255,0.1)' };
     }
-    return { label: `${total} stops`, color: '#8e8e93', bg: 'rgba(142,142,147,0.1)' };
+    return { label: `${totalStops} stops`, color: '#8e8e93', bg: 'rgba(142,142,147,0.1)' };
   };
 
   return (
