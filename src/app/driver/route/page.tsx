@@ -501,6 +501,40 @@ export default function DriverRoutePage() {
       const routes = Array.isArray(data) ? data : data.routes ? data.routes : [data];
       const today = new Date().toISOString().slice(0, 10);
       const todayRoute = routes.find((r: RouteWithDetails) => r.route_date?.slice(0, 10) === today) || routes[0] || null;
+
+      // Detect new stops by comparing against localStorage
+      if (todayRoute?.stops && todayRoute.stops.length > 0) {
+        const storageKey = `mjs-known-stops-${driver.id}`;
+        let known: Set<string>;
+        try {
+          const stored = localStorage.getItem(storageKey);
+          known = stored ? new Set(JSON.parse(stored)) : new Set();
+        } catch { known = new Set(); }
+
+        const currentIds = new Set<string>(todayRoute.stops.map((s: StopWithInvoice) => s.id));
+
+        if (known.size > 0 || initialLoadDone.current) {
+          // Check for stops we haven't seen before
+          const newStops = todayRoute.stops.filter(
+            (s: StopWithInvoice) => !known.has(s.id) && s.status !== 'completed'
+          );
+          if (newStops.length > 0) {
+            const first = newStops[0];
+            const isPickup = first.stop_type === 'pickup' || first.invoice?.ticket_type === 'pickup';
+            setNewStopAlert({
+              customerName: first.invoice?.customer_name || 'a customer',
+              isPickup,
+            });
+            if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+          }
+        }
+
+        // Save all current IDs
+        try { localStorage.setItem(storageKey, JSON.stringify([...currentIds])); } catch {}
+        knownStopIdsRef.current = currentIds;
+        initialLoadDone.current = true;
+      }
+
       setRoute(todayRoute);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load route');
@@ -518,50 +552,7 @@ export default function DriverRoutePage() {
   }, [driver, router, fetchRoute]);
 
   // Track known stop IDs — persisted in localStorage so we detect new stops after sleep/refresh
-  const getStoredStopIds = useCallback((): Set<string> => {
-    try {
-      const stored = localStorage.getItem(`mjs-known-stops-${driver?.id}`);
-      return stored ? new Set(JSON.parse(stored)) : new Set();
-    } catch { return new Set(); }
-  }, [driver?.id]);
-
-  const saveStopIds = useCallback((ids: Set<string>) => {
-    if (!driver?.id) return;
-    try { localStorage.setItem(`mjs-known-stops-${driver.id}`, JSON.stringify([...ids])); } catch {}
-    knownStopIdsRef.current = ids;
-  }, [driver?.id]);
-
-  // When route data loads, check for new stops the driver hasn't seen yet
-  useEffect(() => {
-    if (!route?.stops || route.stops.length === 0) return;
-
-    const currentIds = new Set(route.stops.map((s) => s.id));
-    const known = getStoredStopIds();
-
-    // First load ever — just store IDs, no alert
-    if (known.size === 0) {
-      saveStopIds(currentIds);
-      knownStopIdsRef.current = currentIds;
-      return;
-    }
-
-    // Find stops that weren't there before
-    const newStops = route.stops.filter((s) => !known.has(s.id) && s.status !== 'completed');
-
-    if (newStops.length > 0) {
-      // Show alert for the first new stop found
-      const first = newStops[0];
-      const isPickup = first.stop_type === 'pickup' || first.invoice?.ticket_type === 'pickup';
-      setNewStopAlert({
-        customerName: first.invoice?.customer_name || 'a customer',
-        isPickup,
-      });
-      if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
-    }
-
-    // Update stored IDs to include everything current
-    saveStopIds(currentIds);
-  }, [route, getStoredStopIds, saveStopIds]);
+  const initialLoadDone = useRef(false);
 
   // Supabase Realtime — listen for new stops added to this driver's route
   // Triggers a route refresh; the new-stop detection above handles the alert
