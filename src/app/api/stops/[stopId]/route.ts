@@ -41,6 +41,7 @@ export async function PATCH(
     'completed_at',
     'pod_pdf_storage_path',
     'google_drive_file_id',
+    'stop_order',
   ];
 
   const updates: Record<string, unknown> = {};

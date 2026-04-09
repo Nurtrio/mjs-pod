@@ -7,7 +7,7 @@ import type { RouteStop, Invoice } from '@/types';
 import SignaturePad from '@/components/signature-pad';
 import PhotoCapture from '@/components/photo-capture';
 
-type Step = 'invoice' | 'photo' | 'signature' | 'review' | 'submitting' | 'success';
+type Step = 'invoice' | 'photo' | 'signature' | 'review' | 'submitting' | 'success' | 'pickup-confirm' | 'pickup-submitting' | 'pickup-success';
 
 /* ── Inline PDF Preview with fullscreen expand ── */
 function InvoicePdfPreview({ url, invoiceNumber }: { url: string; invoiceNumber: string }) {
@@ -358,8 +358,280 @@ export default function DeliverPage() {
 
   const invoiceNumber = stop?.invoice?.invoice_number || 'N/A';
   const customerName = stop?.invoice?.customer_name || 'Unknown Customer';
+  const isPickup = stop?.stop_type === 'pickup' || stop?.invoice?.ticket_type === 'pickup';
 
-  // ── STEP: INVOICE VIEW ──
+  // ── PICKUP FLOW ──
+  // Pickup stops: view invoice PDF (reference) → Accept Pickup → done
+  // No photo, no signature, no POD PDF, no Google Drive
+
+  const handlePickupAccept = async () => {
+    if (!stop || !driver) return;
+    setStep('pickup-submitting');
+    setSubmitError(null);
+
+    try {
+      let gpsLat: string | undefined;
+      let gpsLng: string | undefined;
+      try {
+        const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 })
+        );
+        gpsLat = String(pos.coords.latitude);
+        gpsLng = String(pos.coords.longitude);
+      } catch { /* GPS optional */ }
+
+      const res = await fetch('/api/pod/pickup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stop_id: stop.id,
+          driver_id: driver.id,
+          gps_lat: gpsLat,
+          gps_lng: gpsLng,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Submit failed (${res.status})`);
+      }
+
+      // Check for sibling stops at same customer (multi-invoice)
+      try {
+        const routeRes = await fetch(`/api/routes?driver_id=${driver.id}`);
+        if (routeRes.ok) {
+          const routeData = await routeRes.json();
+          const routes = Array.isArray(routeData) ? routeData : routeData.routes ? routeData.routes : [routeData];
+          const todayISO = new Date().toISOString().slice(0, 10);
+          const todayRoute = routes.find((r: { route_date?: string }) => r.route_date?.slice(0, 10) === todayISO) || routes[0];
+          if (todayRoute?.stops) {
+            const currentAddr = (stop.invoice?.customer_address || '').trim().toLowerCase();
+            const currentName = (stop.invoice?.customer_name || '').trim().toLowerCase();
+            const matchKey = currentAddr || currentName;
+            const siblingPending = todayRoute.stops.filter((s: StopData) => {
+              if (s.id === stop.id) return false;
+              if (s.status === 'completed') return false;
+              const sAddr = (s.invoice?.customer_address || '').trim().toLowerCase();
+              const sName = (s.invoice?.customer_name || '').trim().toLowerCase();
+              return (sAddr || sName) === matchKey;
+            });
+            if (siblingPending.length > 0) {
+              setNextSiblingStopId(siblingPending[0].id);
+            }
+          }
+        }
+      } catch { /* non-critical */ }
+
+      setStep('pickup-success');
+    } catch (e: unknown) {
+      setSubmitError(e instanceof Error ? e.message : 'Submission failed');
+      setStep('pickup-confirm');
+    }
+  };
+
+  // ── PICKUP: Invoice View ──
+  if (isPickup && step === 'invoice') {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+    const pdfPath = stop?.invoice?.pdf_storage_path;
+    const pdfUrl = pdfPath ? `${supabaseUrl}/storage/v1/object/public/invoices/${pdfPath}` : null;
+
+    return (
+      <div className="min-h-[calc(100vh-72px)] bg-background">
+        <div className="px-6 py-7">
+          {/* Back */}
+          <div className="mb-6 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => router.push('/driver/route')}
+              className="flex items-center gap-2 text-[18px] font-medium text-ios-blue transition-opacity active:opacity-60"
+              style={{ WebkitTapHighlightColor: 'transparent' }}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="h-5 w-5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+              </svg>
+              Route
+            </button>
+          </div>
+
+          {/* Pickup header */}
+          <div className="mb-6 rounded-2xl bg-card p-6" style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.04)', borderLeft: '4px solid #ff9500' }}>
+            <div className="flex items-start gap-5">
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl text-white" style={{ backgroundColor: '#ff9500' }}>
+                <svg width="28" height="28" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a1 1 0 011 1v5h5a1 1 0 110 2H9v5a1 1 0 11-2 0V9H2a1 1 0 010-2h5V2a1 1 0 011-1z"/></svg>
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-3">
+                  <span className="inline-flex items-center rounded-full px-3 py-1 text-[12px] font-bold uppercase tracking-wider" style={{ background: 'rgba(255,149,0,0.15)', color: '#ff9500' }}>
+                    Pickup
+                  </span>
+                </div>
+                <h2 className="mt-2 text-[26px] font-bold leading-tight text-foreground">{customerName}</h2>
+                <p className="mt-1.5 text-[17px] font-medium text-ios-blue">INV #{invoiceNumber}</p>
+              </div>
+            </div>
+
+            {stop?.invoice?.customer_address && (
+              <div className="mt-5 flex items-start gap-4 rounded-xl p-5" style={{ background: 'rgba(255,149,0,0.06)' }}>
+                <div className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl" style={{ background: 'rgba(255,149,0,0.15)' }}>
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="#ff9500" className="h-6 w-6">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
+                  </svg>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-semibold uppercase tracking-wider" style={{ color: 'rgba(255,149,0,0.7)' }}>Pickup Location</p>
+                  <p className="mt-1 text-[22px] font-bold leading-snug text-foreground">{stop.invoice.customer_address}</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* PDF Preview */}
+          {pdfUrl ? (
+            <div className="mb-6">
+              <InvoicePdfPreview url={pdfUrl} invoiceNumber={invoiceNumber} />
+            </div>
+          ) : (
+            <div className="mb-6 flex flex-col items-center gap-3 rounded-2xl bg-card px-6 py-12 text-center" style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}>
+              <p className="text-[16px] text-muted">No PDF attached to this ticket</p>
+            </div>
+          )}
+
+          {/* Accept Pickup button */}
+          <button
+            type="button"
+            onClick={() => setStep('pickup-confirm')}
+            className="w-full rounded-2xl py-[20px] text-[20px] font-bold text-white transition-all duration-150 active:scale-[0.97] active:shadow-[0_2px_8px_rgba(255,149,0,0.2)]"
+            style={{ WebkitTapHighlightColor: 'transparent', height: 68, background: 'linear-gradient(135deg, #ff9500, #e68600)', boxShadow: '0 4px 16px rgba(255,149,0,0.3)' }}
+          >
+            Accept Pickup Order
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── PICKUP: Confirm ──
+  if (isPickup && step === 'pickup-confirm') {
+    return (
+      <div className="flex min-h-[calc(100vh-72px)] flex-col items-center justify-center bg-background px-8">
+        <div className="flex flex-col items-center">
+          <div className="mb-6 flex h-24 w-24 items-center justify-center rounded-full" style={{ background: 'rgba(255,149,0,0.12)' }}>
+            <svg width="48" height="48" viewBox="0 0 16 16" fill="#ff9500"><path d="M8 1a1 1 0 011 1v5h5a1 1 0 110 2H9v5a1 1 0 11-2 0V9H2a1 1 0 010-2h5V2a1 1 0 011-1z"/></svg>
+          </div>
+          <h2 className="mb-2 text-[24px] font-bold text-foreground">Confirm Pickup</h2>
+          <p className="mb-2 text-[19px] font-semibold" style={{ color: '#ff9500' }}>{customerName}</p>
+          <p className="mb-8 text-[16px] text-muted">INV #{invoiceNumber}</p>
+
+          {submitError && (
+            <div className="mb-6 w-full max-w-md rounded-2xl bg-danger/10 px-6 py-5 text-center text-[16px] font-medium text-danger">
+              {submitError}
+            </div>
+          )}
+        </div>
+
+        <div className="flex w-full max-w-md flex-col gap-3">
+          <button
+            type="button"
+            onClick={handlePickupAccept}
+            className="w-full rounded-2xl py-[20px] text-[20px] font-bold text-white transition-all duration-150 active:scale-[0.97]"
+            style={{ WebkitTapHighlightColor: 'transparent', height: 68, background: 'linear-gradient(135deg, #ff9500, #e68600)', boxShadow: '0 4px 16px rgba(255,149,0,0.3)' }}
+          >
+            Confirm — Product Collected
+          </button>
+          <button
+            type="button"
+            onClick={() => setStep('invoice')}
+            className="w-full rounded-2xl bg-card py-[16px] text-[17px] font-semibold text-foreground transition-all duration-150 active:scale-[0.97]"
+            style={{ WebkitTapHighlightColor: 'transparent', boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}
+          >
+            Back to Invoice
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── PICKUP: Submitting ──
+  if (isPickup && step === 'pickup-submitting') {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background px-8">
+        <div className="relative mb-10">
+          <div className="h-20 w-20 rounded-full border-[4px] border-[rgba(255,149,0,0.2)]" style={{ borderTopColor: '#ff9500', animation: 'spin 0.8s linear infinite' }} />
+        </div>
+        <p className="text-[24px] font-bold text-foreground">Processing Pickup...</p>
+        <p className="mt-3 text-[16px] text-muted">Marking pickup as completed</p>
+      </div>
+    );
+  }
+
+  // ── PICKUP: Success ──
+  if (isPickup && step === 'pickup-success') {
+    return (
+      <div className="flex min-h-[calc(100vh-72px)] flex-col items-center justify-center bg-background px-8">
+        <div style={{ animation: 'spring-in 0.5s ease-out' }} className="flex flex-col items-center">
+          <div className="mb-8 flex h-32 w-32 items-center justify-center rounded-full" style={{ background: 'rgba(255,149,0,0.12)' }}>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={2.5}
+              stroke="#ff9500"
+              className="h-20 w-20"
+              style={{ animation: 'checkDraw 0.5s ease-out forwards' }}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+            </svg>
+          </div>
+          <h2 className="mb-3 text-[34px] font-bold" style={{ color: '#ff9500' }}>Pickup Complete!</h2>
+          <p className="mb-2 text-[19px] text-foreground">{customerName}</p>
+          <p className="mb-4 text-[15px] text-muted">INV #{invoiceNumber}</p>
+
+          {nextSiblingStopId && (
+            <div className="mb-8 rounded-2xl px-6 py-4 text-center" style={{ background: 'rgba(255,149,0,0.1)', border: '1px solid rgba(255,149,0,0.25)' }}>
+              <p className="text-[16px] font-semibold" style={{ color: '#ff9500' }}>
+                More tickets at this stop
+              </p>
+              <p className="mt-1 text-[14px] text-muted">Next ticket is ready</p>
+            </div>
+          )}
+          {!nextSiblingStopId && <div className="mb-8" />}
+        </div>
+
+        {nextSiblingStopId ? (
+          <div className="flex w-full max-w-md flex-col gap-3">
+            <button
+              type="button"
+              onClick={() => router.push(`/driver/deliver/${nextSiblingStopId}`)}
+              className="w-full rounded-2xl py-[20px] text-[20px] font-bold text-white transition-all duration-150 active:scale-[0.97]"
+              style={{ WebkitTapHighlightColor: 'transparent', height: 68, background: 'linear-gradient(135deg, #ff9500, #e68600)', boxShadow: '0 4px 16px rgba(255,149,0,0.3)' }}
+            >
+              Next Ticket →
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push('/driver/route')}
+              className="w-full rounded-2xl bg-card py-[16px] text-[17px] font-semibold text-foreground transition-all duration-150 active:scale-[0.97]"
+              style={{ WebkitTapHighlightColor: 'transparent', boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}
+            >
+              Back to Route
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => router.push('/driver/route')}
+            className="w-full max-w-md rounded-2xl py-[20px] text-[20px] font-bold text-white transition-all duration-150 active:scale-[0.97]"
+            style={{ WebkitTapHighlightColor: 'transparent', height: 68, background: 'linear-gradient(135deg, #ff9500, #e68600)', boxShadow: '0 4px 16px rgba(255,149,0,0.3)' }}
+          >
+            Back to Route
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // ── STEP: INVOICE VIEW (regular delivery) ──
   if (step === 'invoice') {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
     const pdfPath = stop?.invoice?.pdf_storage_path;
