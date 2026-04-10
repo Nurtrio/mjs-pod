@@ -344,11 +344,14 @@ export default function LiveMap() {
     });
   }, []);
 
-  // Check if a driver's route is fully completed
-  const isDriverRouteCompleted = useCallback(
+  // Check if a driver should be shown at the warehouse
+  // True when: no route today, OR all stops completed/skipped
+  const isDriverAtWarehouse = useCallback(
     (driverId: string): boolean => {
       const driverRoute = routes.find((r) => r.driver_id === driverId);
-      if (!driverRoute || !driverRoute.stops || driverRoute.stops.length === 0) return false;
+      // No route today — driver is at base
+      if (!driverRoute || !driverRoute.stops || driverRoute.stops.length === 0) return true;
+      // All stops done — driver returned to base
       return driverRoute.stops.every(
         (s: CompletedStop & { status?: string }) =>
           s.status === 'completed' || s.status === 'skipped'
@@ -368,7 +371,7 @@ export default function LiveMap() {
         const name = (loc.driver as unknown as { name: string })?.name || 'Driver';
         const color = getDriverColor(name);
         const initial = name.charAt(0).toUpperCase();
-        const routeDone = isDriverRouteCompleted(loc.driver_id);
+        const routeDone = isDriverAtWarehouse(loc.driver_id);
         const actInfo = routeDone
           ? { text: 'Route Complete', color: '#22c55e', bgColor: 'rgba(34,197,94,0.1)' }
           : activityLabel(loc.activity);
@@ -448,7 +451,7 @@ export default function LiveMap() {
         }
       }
     });
-  }, [locations, routes, mapReady, isDriverRouteCompleted]);
+  }, [locations, routes, mapReady, isDriverAtWarehouse]);
 
   // Draw trail polylines
   useEffect(() => {
