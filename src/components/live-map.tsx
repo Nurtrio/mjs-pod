@@ -115,6 +115,7 @@ export default function LiveMap() {
   const markersRef = useRef<Record<string, L.Marker>>({});
   const deliveryMarkersRef = useRef<L.Marker[]>([]);
   const trailLinesRef = useRef<Record<string, L.Polyline>>({});
+  const trailOutlinesRef = useRef<Record<string, L.Polyline>>({});
   const legendRef = useRef<L.Control | null>(null);
   const hasFitBoundsRef = useRef(false);
 
@@ -314,8 +315,16 @@ export default function LiveMap() {
               Home Base
             </div>
             <div style="display:flex;align-items:center;gap:6px;">
-              <span style="width:10px;height:10px;border-radius:50%;background:#3b82f6;display:inline-block;border:1.5px solid #fff;box-shadow:0 0 0 1px #3b82f6;"></span>
-              Driver
+              <span style="width:18px;height:3px;border-radius:2px;background:#3b82f6;display:inline-block;"></span>
+              Erik
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="width:18px;height:3px;border-radius:2px;background:#f59e0b;display:inline-block;"></span>
+              Jose
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="width:18px;height:3px;border-radius:2px;background:#8b5cf6;display:inline-block;"></span>
+              Al
             </div>
             <div style="display:flex;align-items:center;gap:6px;">
               <span style="width:10px;height:10px;border-radius:50%;background:#22c55e;display:inline-block;border:1.5px solid #fff;box-shadow:0 0 0 1px #22c55e;"></span>
@@ -335,6 +344,19 @@ export default function LiveMap() {
     });
   }, []);
 
+  // Check if a driver's route is fully completed
+  const isDriverRouteCompleted = useCallback(
+    (driverId: string): boolean => {
+      const driverRoute = routes.find((r) => r.driver_id === driverId);
+      if (!driverRoute || !driverRoute.stops || driverRoute.stops.length === 0) return false;
+      return driverRoute.stops.every(
+        (s: CompletedStop & { status?: string }) =>
+          s.status === 'completed' || s.status === 'skipped'
+      );
+    },
+    [routes]
+  );
+
   // Update driver markers when locations change
   useEffect(() => {
     if (!mapReady || !leafletMapRef.current) return;
@@ -346,11 +368,18 @@ export default function LiveMap() {
         const name = (loc.driver as unknown as { name: string })?.name || 'Driver';
         const color = getDriverColor(name);
         const initial = name.charAt(0).toUpperCase();
-        const actInfo = activityLabel(loc.activity);
+        const routeDone = isDriverRouteCompleted(loc.driver_id);
+        const actInfo = routeDone
+          ? { text: 'Route Complete', color: '#22c55e', bgColor: 'rgba(34,197,94,0.1)' }
+          : activityLabel(loc.activity);
 
-        const isAtStop = loc.activity?.status === 'at_stop';
-        const isStationary = loc.activity?.status === 'stationary';
-        const pulseColor = isAtStop ? '#34c759' : isStationary ? '#ff9500' : color;
+        // Override position to warehouse if route is completed
+        const markerLat = routeDone ? HOME_BASE.lat : loc.lat;
+        const markerLng = routeDone ? HOME_BASE.lng : loc.lng;
+
+        const isAtStop = !routeDone && loc.activity?.status === 'at_stop';
+        const isStationary = !routeDone && loc.activity?.status === 'stationary';
+        const pulseColor = routeDone ? '#22c55e' : isAtStop ? '#34c759' : isStationary ? '#ff9500' : color;
 
         const icon = L.divIcon({
           className: '',
@@ -397,11 +426,11 @@ export default function LiveMap() {
         `;
 
         if (markersRef.current[loc.driver_id]) {
-          markersRef.current[loc.driver_id].setLatLng([loc.lat, loc.lng]);
+          markersRef.current[loc.driver_id].setLatLng([markerLat, markerLng]);
           markersRef.current[loc.driver_id].setIcon(icon);
           markersRef.current[loc.driver_id].setPopupContent(popupContent);
         } else {
-          const marker = L.marker([loc.lat, loc.lng], { icon }).bindPopup(popupContent).addTo(map);
+          const marker = L.marker([markerLat, markerLng], { icon }).bindPopup(popupContent).addTo(map);
           markersRef.current[loc.driver_id] = marker;
         }
       }
@@ -419,7 +448,7 @@ export default function LiveMap() {
         }
       }
     });
-  }, [locations, mapReady]);
+  }, [locations, routes, mapReady, isDriverRouteCompleted]);
 
   // Draw trail polylines
   useEffect(() => {
@@ -436,19 +465,39 @@ export default function LiveMap() {
         const name = (loc?.driver as unknown as { name: string })?.name || 'Driver';
         const color = getDriverColor(name);
 
-        // Remove old polyline
+        // Remove old polylines
+        if (trailOutlinesRef.current[driverId]) {
+          map.removeLayer(trailOutlinesRef.current[driverId]);
+        }
         if (trailLinesRef.current[driverId]) {
           map.removeLayer(trailLinesRef.current[driverId]);
         }
 
+        // White outline for contrast
+        const outline = L.polyline(
+          points.map((p) => L.latLng(p[0], p[1])),
+          {
+            color: '#ffffff',
+            weight: 7,
+            opacity: 0.6,
+            smoothFactor: 1.5,
+            lineCap: 'round',
+            lineJoin: 'round',
+          }
+        ).addTo(map);
+
+        trailOutlinesRef.current[driverId] = outline;
+
+        // Solid colored path on top
         const polyline = L.polyline(
           points.map((p) => L.latLng(p[0], p[1])),
           {
             color: color,
-            weight: 3,
-            opacity: 0.4,
-            smoothFactor: 1,
-            dashArray: '6, 8',
+            weight: 4,
+            opacity: 0.85,
+            smoothFactor: 1.5,
+            lineCap: 'round',
+            lineJoin: 'round',
           }
         ).addTo(map);
 
