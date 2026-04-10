@@ -9,7 +9,7 @@ const DRIVER_COLORS: Record<string, string> = {
   Al: '#8b5cf6',
 };
 
-const HOME_BASE = { lat: 33.8458, lng: -117.8685 }; // 3066 E La Palma Ave, Anaheim, CA 92806
+const HOME_BASE = { lat: 33.8507, lng: -117.8582 }; // 3066 E La Palma Ave, Anaheim, CA 92806
 
 const STATUS_DOTS: Record<string, { color: string; label: string }> = {
   at_stop: { color: '#34c759', label: 'At Stop' },
@@ -463,10 +463,16 @@ export default function LiveMap() {
         // Remove old polylines
         if (trailOutlinesRef.current[driverId]) {
           map.removeLayer(trailOutlinesRef.current[driverId]);
+          delete trailOutlinesRef.current[driverId];
         }
         if (trailLinesRef.current[driverId]) {
           map.removeLayer(trailLinesRef.current[driverId]);
+          delete trailLinesRef.current[driverId];
         }
+
+        // Don't draw trails if driver has no active route today (avoids stale GPS drift lines)
+        const hasRoute = routes.some((r) => r.driver_id === driverId);
+        if (!hasRoute) continue;
 
         // White outline for contrast
         const outline = L.polyline(
@@ -499,7 +505,7 @@ export default function LiveMap() {
         trailLinesRef.current[driverId] = polyline;
       }
     });
-  }, [trails, locations, mapReady]);
+  }, [trails, locations, routes, mapReady]);
 
   // Draw completed delivery markers
   useEffect(() => {
