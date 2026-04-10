@@ -315,15 +315,18 @@ export default function LiveMap() {
               Home Base
             </div>
             <div style="display:flex;align-items:center;gap:6px;">
-              <span style="width:18px;height:3px;border-radius:2px;background:#3b82f6;display:inline-block;"></span>
+              <img src="/truck-pin.png" style="width:16px;height:24px;object-fit:contain;" />
+              <span style="width:14px;height:3px;border-radius:2px;background:#3b82f6;display:inline-block;"></span>
               Erik
             </div>
             <div style="display:flex;align-items:center;gap:6px;">
-              <span style="width:18px;height:3px;border-radius:2px;background:#f59e0b;display:inline-block;"></span>
+              <img src="/truck-pin.png" style="width:16px;height:24px;object-fit:contain;" />
+              <span style="width:14px;height:3px;border-radius:2px;background:#f59e0b;display:inline-block;"></span>
               Jose
             </div>
             <div style="display:flex;align-items:center;gap:6px;">
-              <span style="width:18px;height:3px;border-radius:2px;background:#8b5cf6;display:inline-block;"></span>
+              <img src="/truck-pin.png" style="width:16px;height:24px;object-fit:contain;" />
+              <span style="width:14px;height:3px;border-radius:2px;background:#8b5cf6;display:inline-block;"></span>
               Al
             </div>
             <div style="display:flex;align-items:center;gap:6px;">
@@ -386,32 +389,21 @@ export default function LiveMap() {
 
         const icon = L.divIcon({
           className: '',
-          html: `<div style="position:relative;">
+          html: `<div style="position:relative; display:flex; flex-direction:column; align-items:center;">
             <div style="
-              width: 42px; height: 42px; border-radius: 50%;
-              background: ${color}; border: 3px solid #fff;
-              box-shadow: 0 2px 12px ${color}66;
-              display: flex; align-items: center; justify-content: center;
-              color: #fff; font-size: 18px; font-weight: 700;
-            ">${initial}</div>
-            <div style="
-              position: absolute; top: -3px; left: -3px; right: -3px; bottom: -3px;
-              border-radius: 50%; border: 2px solid ${pulseColor}40;
-              animation: pulse-ring 2s ease-out infinite;
+              width: 50px; height: 80px;
+              background: url('/truck-pin.png') center/contain no-repeat;
+              filter: drop-shadow(0 2px 6px rgba(0,0,0,0.35));
             "></div>
-            ${
-              isAtStop || isStationary
-                ? `<div style="
-              position: absolute; bottom: -8px; left: 50%; transform: translateX(-50%);
-              background: ${actInfo.color}; color: #fff;
-              font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 4px;
-              white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,0.2);
-            ">${loc.activity?.dwell_minutes || 0}m</div>`
-                : ''
-            }
+            <div style="
+              margin-top: 2px; background: ${color}; color: #fff;
+              font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 6px;
+              white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+              text-align: center;
+            ">${name}${isAtStop || isStationary ? ` · ${loc.activity?.dwell_minutes || 0}m` : ''}</div>
           </div>`,
-          iconSize: [42, 42],
-          iconAnchor: [21, 21],
+          iconSize: [50, 90],
+          iconAnchor: [25, 45],
         });
 
         const popupContent = `
