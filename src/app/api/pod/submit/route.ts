@@ -110,6 +110,7 @@ export async function POST(request: NextRequest) {
     gpsLat: gpsLat ? parseFloat(gpsLat) : null,
     gpsLng: gpsLng ? parseFloat(gpsLng) : null,
     notes: notesInput || null,
+    backorderNotes: backorderNotes || null,
   });
 
   // g. Upload POD PDF to Supabase Storage
