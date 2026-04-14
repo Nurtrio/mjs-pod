@@ -1,19 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
+import { geocodeAddress, haversineMeters } from '@/lib/geocode';
 
 const STATIONARY_SPEED_THRESHOLD = 0.9; // m/s (~2 mph)
-const STOP_PROXIMITY_METERS = 150; // within 150m of a stop = "at stop"
+const STOP_PROXIMITY_METERS = 250; // within 250m of a stop = "at stop"
 
-/** Haversine distance between two GPS points in meters */
-function distanceMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6371000;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLng = ((lng2 - lng1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
 
 // POST: Driver sends GPS position
 export async function POST(request: NextRequest) {
@@ -77,11 +68,30 @@ export async function POST(request: NextRequest) {
 
       if (stops) {
         for (const stop of stops) {
-          // If this stop has a previous GPS coordinate from a completed delivery nearby, use it
-          // Otherwise check if we have any reference coordinates
+          if (stop.arrived_at) continue;
+
+          let stopLat: number | null = null;
+          let stopLng: number | null = null;
+
+          // Use existing GPS coords if available (from a prior delivery at same address)
           if (stop.gps_lat && stop.gps_lng) {
-            const dist = distanceMeters(lat, lng, Number(stop.gps_lat), Number(stop.gps_lng));
-            if (dist < STOP_PROXIMITY_METERS && !stop.arrived_at) {
+            stopLat = Number(stop.gps_lat);
+            stopLng = Number(stop.gps_lng);
+          } else {
+            // Geocode the customer address for proximity check
+            const addr = (stop.invoice as unknown as { customer_address?: string })?.customer_address;
+            if (addr) {
+              const geo = await geocodeAddress(addr);
+              if (geo) {
+                stopLat = geo.lat;
+                stopLng = geo.lng;
+              }
+            }
+          }
+
+          if (stopLat != null && stopLng != null) {
+            const dist = haversineMeters(lat, lng, stopLat, stopLng);
+            if (dist < STOP_PROXIMITY_METERS) {
               await supabase
                 .from('route_stops')
                 .update({ arrived_at: new Date().toISOString() })

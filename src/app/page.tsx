@@ -149,6 +149,14 @@ export default function DashboardPage() {
   );
   const completionPct = totalStops > 0 ? Math.round((completedStops / totalStops) * 100) : 0;
 
+  // Average dwell time across all completed stops
+  const allDwellSeconds = routes.flatMap((r) =>
+    (r.stops ?? []).filter((s) => s.status === 'completed' && s.dwell_seconds != null).map((s) => s.dwell_seconds as number)
+  );
+  const avgDwellMinutes = allDwellSeconds.length > 0
+    ? Math.round(allDwellSeconds.reduce((a, b) => a + b, 0) / allDwellSeconds.length / 60)
+    : 0;
+
   const stats = [
     {
       label: 'Total Deliveries',
@@ -199,6 +207,19 @@ export default function DashboardPage() {
           <path d="M18 20V10" />
           <path d="M12 20V4" />
           <path d="M6 20v-6" />
+        </svg>
+      ),
+    },
+    {
+      label: 'Avg Dwell',
+      value: allDwellSeconds.length > 0 ? `${avgDwellMinutes}m` : '—',
+      color: '#a78bfa',
+      bg: 'linear-gradient(135deg, rgba(167,139,250,0.08) 0%, rgba(167,139,250,0.02) 100%)',
+      icon: (
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="12 6 12 12 16 14" />
+          <path d="M22 12h-2" /><path d="M4 12H2" />
         </svg>
       ),
     },
@@ -316,7 +337,7 @@ export default function DashboardPage() {
         {!loading && !error && (
           <>
             {/* Stats Row */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 24 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 14, marginBottom: 24 }}>
               {stats.map((stat) => (
                 <div
                   key={stat.label}
@@ -395,6 +416,8 @@ export default function DashboardPage() {
                     const driverColor = DRIVER_COLORS[driverName] ?? '#8b5cf6';
                     const allDone = pct === 100;
                     const actInfo = getActivityInfo(route.driver_id, stops);
+                    const driverDwells = stops.filter((s) => s.status === 'completed' && s.dwell_seconds != null).map((s) => s.dwell_seconds as number);
+                    const driverAvgDwell = driverDwells.length > 0 ? Math.round(driverDwells.reduce((a, b) => a + b, 0) / driverDwells.length / 60) : null;
 
                     return (
                       <div
@@ -471,6 +494,11 @@ export default function DashboardPage() {
                             </div>
                             <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0, marginTop: 4 }}>
                               {done} of {total} stops completed
+                              {driverAvgDwell != null && (
+                                <span style={{ marginLeft: 10, padding: '2px 8px', borderRadius: 6, fontSize: 11, fontWeight: 600, background: 'rgba(167,139,250,0.1)', color: '#a78bfa' }}>
+                                  Avg {driverAvgDwell}m dwell
+                                </span>
+                              )}
                             </p>
                           </div>
 
