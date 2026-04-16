@@ -6,10 +6,13 @@ import { buildBackorderSummaryHtml } from '@/lib/email-templates';
 export const maxDuration = 60;
 
 export async function GET(request: NextRequest) {
-  // Verify cron secret in production (Vercel sets this header automatically)
-  const authHeader = request.headers.get('authorization');
-  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  // Verify cron secret if configured (Vercel sets this header automatically for cron jobs)
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret) {
+    const authHeader = request.headers.get('authorization');
+    if (authHeader !== `Bearer ${cronSecret}`) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
   }
 
   const supabase = createServerClient();
@@ -93,22 +96,27 @@ export async function GET(request: NextRequest) {
   const html = buildBackorderSummaryHtml(summaryData);
   const subject = `MJS Daily Delivery Report — ${new Date(today + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}`;
 
-  const recipient = process.env.BACKORDER_SUMMARY_EMAIL || 'Nick@mobilejanitorialsupply.com';
+  // Support multiple recipients: comma-separated env var or defaults
+  const recipientStr = process.env.DAILY_SUMMARY_EMAILS || 'Nick@mobilejanitorialsupply.com,Zack@mobilejanitorialsupply.com';
+  const recipients = recipientStr.split(',').map((e) => e.trim()).filter(Boolean);
 
-  try {
-    await sendEmail({ to: recipient, subject, html });
-    return NextResponse.json({
-      success: true,
-      sent_to: recipient,
-      date: today,
-      delivered: totalDelivered,
-      backorders: backorders.length,
-      drivers: driverMap.size,
-    });
-  } catch (emailErr) {
-    return NextResponse.json(
-      { error: `Email failed: ${emailErr instanceof Error ? emailErr.message : emailErr}` },
-      { status: 500 },
-    );
+  const results: { to: string; ok: boolean; error?: string }[] = [];
+  for (const recipient of recipients) {
+    try {
+      await sendEmail({ to: recipient, subject, html });
+      results.push({ to: recipient, ok: true });
+    } catch (emailErr) {
+      results.push({ to: recipient, ok: false, error: emailErr instanceof Error ? emailErr.message : String(emailErr) });
+    }
   }
+
+  const allOk = results.every((r) => r.ok);
+  return NextResponse.json({
+    success: allOk,
+    sent_to: results,
+    date: today,
+    delivered: totalDelivered,
+    backorders: backorders.length,
+    drivers: driverMap.size,
+  }, { status: allOk ? 200 : 207 });
 }
