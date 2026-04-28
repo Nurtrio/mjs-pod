@@ -138,7 +138,10 @@ export async function POST(request: NextRequest) {
       dateStr
     );
   } catch (driveErr) {
-    console.error('Google Drive upload failed:', driveErr instanceof Error ? driveErr.message : driveErr);
+    const errMsg = driveErr instanceof Error ? driveErr.message : String(driveErr);
+    const errStack = driveErr instanceof Error ? driveErr.stack : '';
+    console.error('Google Drive upload failed:', errMsg);
+    console.error('Drive error details:', errStack);
   }
 
   // i. Update route_stop record with dwell time calculation

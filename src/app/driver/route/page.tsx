@@ -354,6 +354,36 @@ export default function DriverRoutePage() {
     return () => navigator.geolocation.clearWatch(watcher);
   }, []);
 
+  // Report GPS position to server every 2 minutes for dashboard truck tracking
+  useEffect(() => {
+    if (!driver?.id) return;
+    const reportPosition = () => {
+      if (!navigator.geolocation) return;
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          fetch('/api/drivers/location', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              driver_id: driver.id,
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+              heading: pos.coords.heading,
+              speed: pos.coords.speed,
+              accuracy: pos.coords.accuracy,
+            }),
+          }).catch(() => {});
+        },
+        () => {},
+        { enableHighAccuracy: true, maximumAge: 60000, timeout: 15000 }
+      );
+    };
+    // Report immediately, then every 2 minutes
+    reportPosition();
+    const interval = setInterval(reportPosition, 120000);
+    return () => clearInterval(interval);
+  }, [driver?.id]);
+
   // Non-passive touchmove handler so preventDefault() actually stops scrolling during drag
   useEffect(() => {
     const el = listRef.current;

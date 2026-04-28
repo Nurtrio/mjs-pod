@@ -114,14 +114,11 @@ export default function LiveMap() {
   const leafletMapRef = useRef<L.Map | null>(null);
   const markersRef = useRef<Record<string, L.Marker>>({});
   const deliveryMarkersRef = useRef<L.Marker[]>([]);
-  const trailLinesRef = useRef<Record<string, L.Polyline>>({});
-  const trailOutlinesRef = useRef<Record<string, L.Polyline>>({});
   const legendRef = useRef<L.Control | null>(null);
   const hasFitBoundsRef = useRef(false);
 
   const [locations, setLocations] = useState<DriverLoc[]>([]);
   const [routes, setRoutes] = useState<RouteData[]>([]);
-  const [trails, setTrails] = useState<Record<string, [number, number][]>>({});
   const [mapReady, setMapReady] = useState(false);
   const [podViewer, setPodViewer] = useState<{ url: string; customer: string; invoice: string } | null>(null);
 
@@ -148,29 +145,6 @@ export default function LiveMap() {
       .catch(() => {});
   }, [today]);
 
-  // Fetch trail history for a driver
-  const fetchTrailHistory = useCallback(
-    (driverId: string) => {
-      fetch(`/api/drivers/location/history?driver_id=${driverId}&date=${today}`)
-        .then((r) => {
-          if (!r.ok) throw new Error('not ok');
-          return r.json();
-        })
-        .then((data) => {
-          if (data.history && Array.isArray(data.history)) {
-            const points: [number, number][] = data.history.map(
-              (h: { lat: number; lng: number }) => [h.lat, h.lng] as [number, number]
-            );
-            setTrails((prev) => ({ ...prev, [driverId]: points }));
-          }
-        })
-        .catch(() => {
-          // Silently ignore — trails just won't show
-        });
-    },
-    [today]
-  );
-
   // Initial fetch + polling every 8 seconds
   useEffect(() => {
     fetchLocations();
@@ -183,27 +157,6 @@ export default function LiveMap() {
       clearInterval(routeInterval);
     };
   }, [fetchLocations, fetchRoutes]);
-
-  // Fetch trail history when we get driver IDs
-  useEffect(() => {
-    for (const loc of locations) {
-      if (loc.driver_id && !trails[loc.driver_id]) {
-        fetchTrailHistory(loc.driver_id);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locations, fetchTrailHistory]);
-
-  // Refresh trails every 30 seconds
-  useEffect(() => {
-    if (locations.length === 0) return;
-    const interval = setInterval(() => {
-      for (const loc of locations) {
-        if (loc.driver_id) fetchTrailHistory(loc.driver_id);
-      }
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [locations, fetchTrailHistory]);
 
   // Subscribe to Supabase Realtime for position updates
   useEffect(() => {
@@ -235,14 +188,6 @@ export default function LiveMap() {
                 return updated;
               }
               return [...prev, newLoc];
-            });
-            // Append to trail in-memory
-            setTrails((prev) => {
-              const existing = prev[newLoc.driver_id] || [];
-              return {
-                ...prev,
-                [newLoc.driver_id]: [...existing, [newLoc.lat, newLoc.lng] as [number, number]],
-              };
             });
           }
         }
@@ -316,17 +261,14 @@ export default function LiveMap() {
             </div>
             <div style="display:flex;align-items:center;gap:6px;">
               <img src="/truck-pin.png" style="width:16px;height:24px;object-fit:contain;" />
-              <span style="width:14px;height:3px;border-radius:2px;background:#3b82f6;display:inline-block;"></span>
               Erik
             </div>
             <div style="display:flex;align-items:center;gap:6px;">
               <img src="/truck-pin.png" style="width:16px;height:24px;object-fit:contain;" />
-              <span style="width:14px;height:3px;border-radius:2px;background:#f59e0b;display:inline-block;"></span>
               Jose
             </div>
             <div style="display:flex;align-items:center;gap:6px;">
               <img src="/truck-pin.png" style="width:16px;height:24px;object-fit:contain;" />
-              <span style="width:14px;height:3px;border-radius:2px;background:#8b5cf6;display:inline-block;"></span>
               Al
             </div>
             <div style="display:flex;align-items:center;gap:6px;">
@@ -444,68 +386,6 @@ export default function LiveMap() {
       }
     });
   }, [locations, routes, mapReady, isDriverAtWarehouse]);
-
-  // Draw trail polylines
-  useEffect(() => {
-    if (!mapReady || !leafletMapRef.current) return;
-
-    import('leaflet').then((L) => {
-      const map = leafletMapRef.current!;
-
-      for (const [driverId, points] of Object.entries(trails)) {
-        if (points.length < 2) continue;
-
-        // Find driver name for color
-        const loc = locations.find((l) => l.driver_id === driverId);
-        const name = (loc?.driver as unknown as { name: string })?.name || 'Driver';
-        const color = getDriverColor(name);
-
-        // Remove old polylines
-        if (trailOutlinesRef.current[driverId]) {
-          map.removeLayer(trailOutlinesRef.current[driverId]);
-          delete trailOutlinesRef.current[driverId];
-        }
-        if (trailLinesRef.current[driverId]) {
-          map.removeLayer(trailLinesRef.current[driverId]);
-          delete trailLinesRef.current[driverId];
-        }
-
-        // Don't draw trails if driver has no active route today (avoids stale GPS drift lines)
-        const hasRoute = routes.some((r) => r.driver_id === driverId);
-        if (!hasRoute) continue;
-
-        // White outline for contrast
-        const outline = L.polyline(
-          points.map((p) => L.latLng(p[0], p[1])),
-          {
-            color: '#ffffff',
-            weight: 7,
-            opacity: 0.6,
-            smoothFactor: 1.5,
-            lineCap: 'round',
-            lineJoin: 'round',
-          }
-        ).addTo(map);
-
-        trailOutlinesRef.current[driverId] = outline;
-
-        // Solid colored path on top
-        const polyline = L.polyline(
-          points.map((p) => L.latLng(p[0], p[1])),
-          {
-            color: color,
-            weight: 4,
-            opacity: 0.85,
-            smoothFactor: 1.5,
-            lineCap: 'round',
-            lineJoin: 'round',
-          }
-        ).addTo(map);
-
-        trailLinesRef.current[driverId] = polyline;
-      }
-    });
-  }, [trails, locations, routes, mapReady]);
 
   // Draw completed delivery markers
   useEffect(() => {
