@@ -204,6 +204,9 @@ export default function LiveMap() {
     if (!mapRef.current || leafletMapRef.current) return;
 
     import('leaflet').then((L) => {
+      // Guard against double-init in React Strict Mode / hot reload
+      if (leafletMapRef.current) return;
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       delete (L.Icon.Default.prototype as any)._getIconUrl;
       L.Icon.Default.mergeOptions({
@@ -287,6 +290,14 @@ export default function LiveMap() {
       leafletMapRef.current = map;
       setMapReady(true);
     });
+
+    return () => {
+      if (leafletMapRef.current) {
+        leafletMapRef.current.remove();
+        leafletMapRef.current = null;
+        setMapReady(false);
+      }
+    };
   }, []);
 
   // Check if a driver should be shown at the warehouse
