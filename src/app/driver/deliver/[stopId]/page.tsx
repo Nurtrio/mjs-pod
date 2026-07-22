@@ -7,7 +7,7 @@ import type { RouteStop, Invoice } from '@/types';
 import SignaturePad from '@/components/signature-pad';
 import PhotoCapture from '@/components/photo-capture';
 
-type Step = 'invoice' | 'photo' | 'signature' | 'review' | 'submitting' | 'success' | 'pickup-confirm' | 'pickup-submitting' | 'pickup-success';
+type Step = 'invoice' | 'invoice-photo' | 'product-photos' | 'signature' | 'review' | 'submitting' | 'success' | 'pickup-confirm' | 'pickup-submitting' | 'pickup-success';
 
 /* ── Inline PDF Preview with fullscreen expand ── */
 function InvoicePdfPreview({ url, invoiceNumber }: { url: string; invoiceNumber: string }) {
@@ -91,11 +91,12 @@ function InvoicePdfPreview({ url, invoiceNumber }: { url: string; invoiceNumber:
 type StopData = RouteStop & { invoice: Invoice };
 
 /* Step indicator bar */
-function StepBar({ current }: { current: 1 | 2 | 3 }) {
+function StepBar({ current }: { current: 1 | 2 | 3 | 4 }) {
   const steps = [
-    { num: 1, label: 'Photo' },
-    { num: 2, label: 'Signature' },
-    { num: 3, label: 'Review' },
+    { num: 1, label: 'Ticket' },
+    { num: 2, label: 'Product' },
+    { num: 3, label: 'Signature' },
+    { num: 4, label: 'Review' },
   ];
 
   return (
@@ -120,7 +121,7 @@ function StepBar({ current }: { current: 1 | 2 | 3 }) {
 
 function SubmittingScreen() {
   const [elapsed, setElapsed] = useState(0);
-  const totalSeconds = 7;
+  const totalSeconds = 10;
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -170,11 +171,12 @@ export default function DeliverPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [invoicePhotoFile, setInvoicePhotoFile] = useState<File | null>(null);
+  const [invoicePhotoPreview, setInvoicePhotoPreview] = useState<string | null>(null);
+  const [productPhotoFiles, setProductPhotoFiles] = useState<(File | null)[]>([null, null]);
+  const [productPhotoPreviews, setProductPhotoPreviews] = useState<(string | null)[]>([null, null]);
   const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
-  const [backorderNotes, setBackorderNotes] = useState('');
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [podFilename, setPodFilename] = useState('');
   const [nextSiblingStopId, setNextSiblingStopId] = useState<string | null>(null);
@@ -236,14 +238,24 @@ export default function DeliverPage() {
     };
   }, [stop?.arrived_at, stop?.status, stopId]);
 
-  const handlePhotoCapture = useCallback((file: File, previewUrl: string) => {
-    setPhotoFile(file);
-    setPhotoPreview(previewUrl);
+  const handleInvoicePhotoCapture = useCallback((file: File, previewUrl: string) => {
+    setInvoicePhotoFile(file);
+    setInvoicePhotoPreview(previewUrl);
   }, []);
 
-  const handleRetakePhoto = useCallback(() => {
-    setPhotoFile(null);
-    setPhotoPreview(null);
+  const handleRetakeInvoicePhoto = useCallback(() => {
+    setInvoicePhotoFile(null);
+    setInvoicePhotoPreview(null);
+  }, []);
+
+  const handleProductPhotoCapture = useCallback((index: number) => (file: File, previewUrl: string) => {
+    setProductPhotoFiles((prev) => { const next = [...prev]; next[index] = file; return next; });
+    setProductPhotoPreviews((prev) => { const next = [...prev]; next[index] = previewUrl; return next; });
+  }, []);
+
+  const handleRetakeProductPhoto = useCallback((index: number) => () => {
+    setProductPhotoFiles((prev) => { const next = [...prev]; next[index] = null; return next; });
+    setProductPhotoPreviews((prev) => { const next = [...prev]; next[index] = null; return next; });
   }, []);
 
   const handleSignatureChange = useCallback((dataUrl: string | null) => {
@@ -251,7 +263,7 @@ export default function DeliverPage() {
   }, []);
 
   const handleSubmit = async () => {
-    if (!stop || !driver || !photoFile || !signatureDataUrl) return;
+    if (!stop || !driver || !invoicePhotoFile || !signatureDataUrl) return;
     setStep('submitting');
     setSubmitError(null);
 
@@ -259,10 +271,11 @@ export default function DeliverPage() {
       const formData = new FormData();
       formData.append('stop_id', stop.id);
       formData.append('driver_id', driver.id);
-      formData.append('photo', photoFile);
+      formData.append('invoice_photo', invoicePhotoFile);
+      if (productPhotoFiles[0]) formData.append('product_photo_0', productPhotoFiles[0]);
+      if (productPhotoFiles[1]) formData.append('product_photo_1', productPhotoFiles[1]);
       formData.append('signature', signatureDataUrl);
       if (notes.trim()) formData.append('notes', notes.trim());
-      if (backorderNotes.trim()) formData.append('backorder_notes', backorderNotes.trim());
 
       try {
         const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
@@ -313,6 +326,15 @@ export default function DeliverPage() {
         }
       } catch {
         // Non-critical — just skip auto-advance
+      }
+
+      // Notify website that delivery is complete (fire-and-forget)
+      if (stop.tracking_token) {
+        fetch('https://www.714supply.com/api/delivery/complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: stop.tracking_token }),
+        }).catch((err) => console.error('Failed to notify delivery complete:', err));
       }
 
       setStep('success');
@@ -713,7 +735,7 @@ export default function DeliverPage() {
           {/* Start button */}
           <button
             type="button"
-            onClick={() => setStep('photo')}
+            onClick={() => setStep('invoice-photo')}
             className="w-full rounded-2xl bg-accent py-[20px] text-[20px] font-bold text-white shadow-[0_4px_16px_rgba(52,199,89,0.3)] transition-all duration-150 active:scale-[0.97] active:shadow-[0_2px_8px_rgba(52,199,89,0.2)]"
             style={{ WebkitTapHighlightColor: 'transparent', height: 68 }}
           >
@@ -724,8 +746,8 @@ export default function DeliverPage() {
     );
   }
 
-  // ── STEP: PHOTO CAPTURE ──
-  if (step === 'photo') {
+  // ── STEP: INVOICE TICKET PHOTO ──
+  if (step === 'invoice-photo') {
     return (
       <div className="flex min-h-[calc(100vh-72px)] flex-col bg-background px-6 py-7">
         <StepBar current={1} />
@@ -738,13 +760,14 @@ export default function DeliverPage() {
           )}
         </div>
 
-        <h2 className="mb-5 text-[24px] font-bold text-foreground">Take Delivery Photo</h2>
+        <h2 className="mb-2 text-[24px] font-bold text-foreground">Photo of Invoice Ticket</h2>
+        <p className="mb-5 text-[16px] text-muted">Take a photo of the yellow paper invoice/ticket</p>
 
         <div className="flex-1">
           <PhotoCapture
-            onPhotoCapture={handlePhotoCapture}
-            onRetake={handleRetakePhoto}
-            previewUrl={photoPreview}
+            onPhotoCapture={handleInvoicePhotoCapture}
+            onRetake={handleRetakeInvoicePhoto}
+            previewUrl={invoicePhotoPreview}
           />
         </div>
 
@@ -759,8 +782,69 @@ export default function DeliverPage() {
           </button>
           <button
             type="button"
+            onClick={() => setStep('product-photos')}
+            disabled={!invoicePhotoFile}
+            className="flex-1 rounded-2xl bg-accent py-[18px] text-[18px] font-bold text-white shadow-[0_4px_16px_rgba(52,199,89,0.3)] transition-all duration-150 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+            style={{ WebkitTapHighlightColor: 'transparent' }}
+          >
+            Next
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── STEP: PRODUCT PHOTOS ──
+  if (step === 'product-photos') {
+    return (
+      <div className="flex min-h-[calc(100vh-72px)] flex-col bg-background px-6 py-7">
+        <StepBar current={2} />
+
+        <div className="mb-4 rounded-2xl bg-card p-5" style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}>
+          <p className="text-[18px] font-bold text-foreground">{customerName}</p>
+          <p className="mt-1 text-[15px] font-medium text-ios-blue">INV #{invoiceNumber}</p>
+        </div>
+
+        <h2 className="mb-2 text-[24px] font-bold text-foreground">Product Delivery Photos</h2>
+        <p className="mb-5 text-[16px] text-muted">Take up to 2 photos of the delivered product</p>
+
+        <div className="flex-1 space-y-6">
+          {/* Product Photo 1 */}
+          <div>
+            <p className="mb-3 text-[16px] font-semibold text-foreground">Photo 1</p>
+            <PhotoCapture
+              onPhotoCapture={handleProductPhotoCapture(0)}
+              onRetake={handleRetakeProductPhoto(0)}
+              previewUrl={productPhotoPreviews[0]}
+            />
+          </div>
+
+          {/* Product Photo 2 — only show after first is taken */}
+          {productPhotoFiles[0] && (
+            <div>
+              <p className="mb-3 text-[16px] font-semibold text-foreground">Photo 2 <span className="font-normal text-muted">(optional)</span></p>
+              <PhotoCapture
+                onPhotoCapture={handleProductPhotoCapture(1)}
+                onRetake={handleRetakeProductPhoto(1)}
+                previewUrl={productPhotoPreviews[1]}
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="mt-7 flex gap-4">
+          <button
+            type="button"
+            onClick={() => setStep('invoice-photo')}
+            className="flex-1 rounded-2xl bg-card py-[18px] text-[18px] font-semibold text-foreground transition-all duration-150 active:scale-[0.97]"
+            style={{ WebkitTapHighlightColor: 'transparent', boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}
+          >
+            Back
+          </button>
+          <button
+            type="button"
             onClick={() => setStep('signature')}
-            disabled={!photoFile}
+            disabled={!productPhotoFiles[0]}
             className="flex-1 rounded-2xl bg-accent py-[18px] text-[18px] font-bold text-white shadow-[0_4px_16px_rgba(52,199,89,0.3)] transition-all duration-150 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
             style={{ WebkitTapHighlightColor: 'transparent' }}
           >
@@ -775,7 +859,7 @@ export default function DeliverPage() {
   if (step === 'signature') {
     return (
       <div className="flex min-h-[calc(100vh-72px)] flex-col bg-background px-6 py-7">
-        <StepBar current={2} />
+        <StepBar current={3} />
 
         <div className="mb-4 rounded-2xl bg-card p-5" style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}>
           <p className="text-[18px] font-bold text-foreground">{customerName}</p>
@@ -795,7 +879,7 @@ export default function DeliverPage() {
         <div className="mt-7 flex gap-4">
           <button
             type="button"
-            onClick={() => setStep('photo')}
+            onClick={() => setStep('product-photos')}
             className="flex-1 rounded-2xl bg-card py-[18px] text-[18px] font-semibold text-foreground transition-all duration-150 active:scale-[0.97]"
             style={{ WebkitTapHighlightColor: 'transparent', boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}
           >
@@ -819,7 +903,7 @@ export default function DeliverPage() {
   if (step === 'review') {
     return (
       <div className="flex min-h-[calc(100vh-72px)] flex-col bg-background px-6 py-7">
-        <StepBar current={3} />
+        <StepBar current={4} />
 
         <h2 className="mb-6 text-[24px] font-bold text-foreground">Review & Submit</h2>
 
@@ -837,7 +921,37 @@ export default function DeliverPage() {
             </div>
           </div>
 
-          {/* Photo */}
+          {/* Invoice Ticket Photo */}
+          <div className="rounded-2xl bg-card p-6" style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}>
+            <div className="mb-5 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg" style={{ background: 'rgba(255,149,0,0.1)' }}>
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-5 w-5" style={{ color: '#ff9500' }}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                  </svg>
+                </div>
+                <p className="text-[18px] font-semibold text-foreground">Invoice Ticket</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStep('invoice-photo')}
+                className="rounded-lg px-4 py-2 text-[16px] font-semibold text-ios-blue transition-opacity active:opacity-60"
+                style={{ WebkitTapHighlightColor: 'transparent' }}
+              >
+                Retake
+              </button>
+            </div>
+            {invoicePhotoPreview && (
+              <img
+                src={invoicePhotoPreview}
+                alt="Invoice ticket"
+                className="w-full rounded-2xl bg-black object-contain"
+                style={{ maxHeight: 280 }}
+              />
+            )}
+          </div>
+
+          {/* Product Photos */}
           <div className="rounded-2xl bg-card p-6" style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}>
             <div className="mb-5 flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -847,25 +961,30 @@ export default function DeliverPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z" />
                   </svg>
                 </div>
-                <p className="text-[18px] font-semibold text-foreground">Delivery Photo</p>
+                <p className="text-[18px] font-semibold text-foreground">Product Photos</p>
               </div>
               <button
                 type="button"
-                onClick={() => setStep('photo')}
+                onClick={() => setStep('product-photos')}
                 className="rounded-lg px-4 py-2 text-[16px] font-semibold text-ios-blue transition-opacity active:opacity-60"
                 style={{ WebkitTapHighlightColor: 'transparent' }}
               >
                 Retake
               </button>
             </div>
-            {photoPreview && (
-              <img
-                src={photoPreview}
-                alt="Delivery"
-                className="w-full rounded-2xl bg-black object-contain"
-                style={{ maxHeight: 340 }}
-              />
-            )}
+            <div className="flex gap-3">
+              {productPhotoPreviews.map((preview, i) =>
+                preview ? (
+                  <img
+                    key={i}
+                    src={preview}
+                    alt={`Product ${i + 1}`}
+                    className="flex-1 rounded-2xl bg-black object-contain"
+                    style={{ maxHeight: 220 }}
+                  />
+                ) : null
+              )}
+            </div>
           </div>
 
           {/* Signature */}
@@ -913,41 +1032,10 @@ export default function DeliverPage() {
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Missing items, special instructions..."
+              placeholder="Special instructions, delivery notes..."
               rows={3}
               className="w-full resize-none rounded-xl bg-background p-5 text-[17px] leading-relaxed text-foreground placeholder:text-muted-2 focus:outline-none focus:ring-2 focus:ring-accent/30"
             />
-          </div>
-
-          {/* Backorders */}
-          <div className="rounded-2xl bg-card p-6" style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.04)' }}>
-            <div className="mb-4 flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg" style={{ background: 'rgba(255,59,48,0.1)' }}>
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-5 w-5" style={{ color: '#ff3b30' }}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-                </svg>
-              </div>
-              <p className="text-[18px] font-semibold text-foreground">Backorders <span className="font-normal text-muted">(if any)</span></p>
-            </div>
-            <textarea
-              value={backorderNotes}
-              onChange={(e) => setBackorderNotes(e.target.value)}
-              placeholder="e.g. B/O 3 cases bleach, 1 box trash bags..."
-              rows={3}
-              className="w-full resize-none rounded-xl p-5 text-[17px] leading-relaxed text-foreground placeholder:text-muted-2 focus:outline-none focus:ring-2"
-              style={{
-                background: backorderNotes ? 'rgba(255,59,48,0.04)' : 'var(--background)',
-                border: backorderNotes ? '1px solid rgba(255,59,48,0.2)' : '1px solid transparent',
-              }}
-            />
-            {backorderNotes.trim() && (
-              <div className="mt-3 flex items-center gap-2 rounded-lg px-3 py-2" style={{ background: 'rgba(255,59,48,0.06)' }}>
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="#ff3b30" className="h-4 w-4 shrink-0">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-                </svg>
-                <p className="text-[13px] font-medium" style={{ color: '#ff3b30' }}>This delivery will be flagged as having backorders</p>
-              </div>
-            )}
           </div>
 
           {submitError && (

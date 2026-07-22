@@ -9,10 +9,12 @@ import { createClient } from '@/lib/supabase/client';
 
 type StopWithInvoice = RouteStop & { invoice: Invoice };
 
-function StopDetailSheet({ stops, onClose, onDeliver }: { stops: StopWithInvoice[]; onClose: () => void; onDeliver: (stop: StopWithInvoice) => void }) {
+function StopDetailSheet({ stops, onClose, onDeliver, driver }: { stops: StopWithInvoice[]; onClose: () => void; onDeliver: (stop: StopWithInvoice) => void; driver: { id: string; name: string } }) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
   const isMulti = stops.length > 1;
   const [activeIdx, setActiveIdx] = useState(0);
+  const [enRouteLoading, setEnRouteLoading] = useState(false);
+  const [enRouteSent, setEnRouteSent] = useState(false);
   const stop = stops[activeIdx];
   const touchStartX = useRef(0);
   const touchDeltaX = useRef(0);
@@ -273,16 +275,102 @@ function StopDetailSheet({ stops, onClose, onDeliver }: { stops: StopWithInvoice
             </>
           )}
 
-          {/* Action button */}
+          {/* Action buttons */}
           {!isCompleted && (
-            <button
-              type="button"
-              onClick={() => onDeliver(stop)}
-              className="w-full rounded-2xl bg-accent py-[18px] text-[20px] font-bold text-white shadow-[0_4px_16px_rgba(52,199,89,0.3)] transition-all duration-150 active:scale-[0.97]"
-              style={{ WebkitTapHighlightColor: 'transparent' }}
-            >
-              Begin Delivery
-            </button>
+            <div className="space-y-3">
+              {/* En Route — notify customer */}
+              {!enRouteSent && !stop.tracking_token && (
+                <button
+                  type="button"
+                  disabled={enRouteLoading}
+                  onClick={async () => {
+                    setEnRouteLoading(true);
+                    try {
+                      // Look up customer email from contacts table
+                      let customerEmail = stop.invoice?.customer_email || null;
+                      if (!customerEmail && stop.invoice?.customer_name) {
+                        const supabase = createClient();
+                        const { data: contact } = await supabase
+                          .from('customer_contacts')
+                          .select('email')
+                          .ilike('customer_name', stop.invoice.customer_name)
+                          .limit(1)
+                          .single();
+                        if (contact?.email) customerEmail = contact.email;
+                      }
+
+                      const res = await fetch('https://www.714supply.com/api/delivery/enroute', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          orderId: stop.invoice?.id,
+                          invoiceNumber: stop.invoice?.invoice_number,
+                          customerName: stop.invoice?.customer_name,
+                          customerEmail,
+                          deliveryAddress: stop.invoice?.customer_address,
+                          deliveryLat: stop.gps_lat || 0,
+                          deliveryLng: stop.gps_lng || 0,
+                          driverName: driver.name,
+                          driverId: driver.id,
+                          vehicleName: 'MJS Truck',
+                        }),
+                      });
+                      const data = await res.json();
+                      if (data.token) {
+                        const supabase = createClient();
+                        await supabase
+                          .from('route_stops')
+                          .update({ tracking_token: data.token })
+                          .eq('id', stop.id);
+                      }
+                      setEnRouteSent(true);
+                    } catch (err) {
+                      console.error('Failed to notify en route:', err);
+                      // Non-fatal — let driver continue
+                      setEnRouteSent(true);
+                    } finally {
+                      setEnRouteLoading(false);
+                    }
+                  }}
+                  className="flex w-full items-center justify-center gap-3 rounded-2xl py-[18px] text-[20px] font-bold text-white transition-all duration-150 active:scale-[0.97]"
+                  style={{
+                    WebkitTapHighlightColor: 'transparent',
+                    background: 'linear-gradient(135deg, #007aff, #5856d6)',
+                    boxShadow: '0 4px 16px rgba(0,122,255,0.3)',
+                    opacity: enRouteLoading ? 0.7 : 1,
+                  }}
+                >
+                  {enRouteLoading ? (
+                    <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="h-6 w-6">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25m-4.5 0V6.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v3.375m-4.5 0h4.5" />
+                    </svg>
+                  )}
+                  {enRouteLoading ? 'Notifying...' : 'En Route'}
+                </button>
+              )}
+              {(enRouteSent || stop.tracking_token) && (
+                <div className="flex items-center justify-center gap-2 rounded-2xl bg-ios-blue/8 py-4 text-[16px] font-semibold text-ios-blue">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="h-5 w-5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                  </svg>
+                  Customer Notified
+                </div>
+              )}
+              {/* Begin Delivery */}
+              <button
+                type="button"
+                onClick={() => onDeliver(stop)}
+                className="w-full rounded-2xl bg-accent py-[18px] text-[20px] font-bold text-white shadow-[0_4px_16px_rgba(52,199,89,0.3)] transition-all duration-150 active:scale-[0.97]"
+                style={{ WebkitTapHighlightColor: 'transparent' }}
+              >
+                Begin Delivery
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -324,6 +412,8 @@ export default function DriverRoutePage() {
   const [removingStopId, setRemovingStopId] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<StopWithInvoice | null>(null);
   const [reordering, setReordering] = useState(false);
+  const [enRouteSentIds, setEnRouteSentIds] = useState<Set<string>>(new Set());
+  const [enRouteLoadingId, setEnRouteLoadingId] = useState<string | null>(null);
   const [localOrder, setLocalOrder] = useState<number[] | null>(null); // indices into pendingGroups
   const localOrderRef = useRef<number[] | null>(null);
   const dragActive = useRef(false);
@@ -1020,12 +1110,90 @@ export default function DriverRoutePage() {
                               </p>
                             )}
                           </div>
-                          {/* Arrow */}
+                          {/* En Route / Arrow */}
                           {!editMode && (
-                            <div className="mt-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-background">
-                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="h-5 w-5 text-muted">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-                              </svg>
+                            <div className="flex shrink-0 flex-col items-center gap-2">
+                              {firstStop.tracking_token || enRouteSentIds.has(firstStop.id) ? (
+                                <div className="flex h-11 items-center gap-1.5 rounded-full bg-accent/10 px-4">
+                                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="h-4 w-4 text-accent">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                                  </svg>
+                                  <span className="text-[12px] font-bold text-accent">Sent</span>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={enRouteLoadingId === firstStop.id}
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    setEnRouteLoadingId(firstStop.id);
+                                    try {
+                                      // Look up customer email from contacts table
+                                      let customerEmail = firstStop.invoice?.customer_email || null;
+                                      if (!customerEmail && firstStop.invoice?.customer_name) {
+                                        const supabase = createClient();
+                                        const { data: contact } = await supabase
+                                          .from('customer_contacts')
+                                          .select('email')
+                                          .ilike('customer_name', firstStop.invoice.customer_name)
+                                          .limit(1)
+                                          .single();
+                                        if (contact?.email) customerEmail = contact.email;
+                                      }
+
+                                      const res = await fetch('https://www.714supply.com/api/delivery/enroute', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                          orderId: firstStop.invoice?.id,
+                                          invoiceNumber: firstStop.invoice?.invoice_number,
+                                          customerName: firstStop.invoice?.customer_name,
+                                          customerEmail,
+                                          deliveryAddress: firstStop.invoice?.customer_address,
+                                          deliveryLat: firstStop.gps_lat || 0,
+                                          deliveryLng: firstStop.gps_lng || 0,
+                                          driverName: driver.name,
+                                          driverId: driver.id,
+                                          vehicleName: 'MJS Truck',
+                                        }),
+                                      });
+                                      const data = await res.json();
+                                      if (data.token) {
+                                        const supabase = createClient();
+                                        await supabase
+                                          .from('route_stops')
+                                          .update({ tracking_token: data.token })
+                                          .eq('id', firstStop.id);
+                                      }
+                                    } catch (err) {
+                                      console.error('Failed to notify en route:', err);
+                                    }
+                                    setEnRouteSentIds((prev) => new Set([...prev, firstStop.id]));
+                                    setEnRouteLoadingId(null);
+                                  }}
+                                  onTouchStart={(e) => e.stopPropagation()}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  className="flex h-11 items-center gap-2 rounded-full px-5 text-[14px] font-bold text-white transition-all duration-150 active:scale-[0.93]"
+                                  style={{
+                                    WebkitTapHighlightColor: 'transparent',
+                                    background: '#34c759',
+                                    boxShadow: '0 2px 8px rgba(52,199,89,0.35)',
+                                    opacity: enRouteLoadingId === firstStop.id ? 0.7 : 1,
+                                  }}
+                                >
+                                  {enRouteLoadingId === firstStop.id ? (
+                                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                    </svg>
+                                  ) : (
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="h-4 w-4">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25m-4.5 0V6.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v3.375m-4.5 0h4.5" />
+                                    </svg>
+                                  )}
+                                  En Route
+                                </button>
+                              )}
                             </div>
                           )}
                         </div>
@@ -1170,6 +1338,7 @@ export default function DriverRoutePage() {
       {selectedGroup && (
         <StopDetailSheet
           stops={selectedGroup}
+          driver={driver}
           onClose={() => setSelectedGroup(null)}
           onDeliver={(stop) => {
             setSelectedGroup(null);

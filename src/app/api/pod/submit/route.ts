@@ -12,15 +12,20 @@ export async function POST(request: NextRequest) {
   const formData = await request.formData();
   const stopId = (formData.get('stopId') ?? formData.get('stop_id')) as string | null;
   const signatureDataUrl = (formData.get('signatureDataUrl') ?? formData.get('signature')) as string | null;
-  const photoFile = (formData.get('photoFile') ?? formData.get('photo')) as File | null;
+  const invoicePhotoFile = formData.get('invoice_photo') as File | null;
+  const productPhoto0 = formData.get('product_photo_0') as File | null;
+  const productPhoto1 = formData.get('product_photo_1') as File | null;
   const notesInput = formData.get('notes') as string | null;
-  const backorderNotes = formData.get('backorder_notes') as string | null;
   const gpsLat = formData.get('gps_lat') as string | null;
   const gpsLng = formData.get('gps_lng') as string | null;
 
-  if (!stopId || !signatureDataUrl || !photoFile) {
+  // Backward compat: accept old single 'photo' field as invoice_photo
+  const photoFallback = formData.get('photoFile') ?? formData.get('photo');
+  const effectiveInvoicePhoto = invoicePhotoFile || (photoFallback as File | null);
+
+  if (!stopId || !signatureDataUrl || !effectiveInvoicePhoto) {
     return NextResponse.json(
-      { error: 'stopId, signatureDataUrl, and photoFile are required' },
+      { error: 'stopId, signatureDataUrl, and invoice_photo are required' },
       { status: 400 }
     );
   }
@@ -59,7 +64,7 @@ export async function POST(request: NextRequest) {
 
   const { error: sigUploadError } = await supabase.storage
     .from('signatures')
-    .upload(sigPath, sigBuffer, { contentType: 'image/png' });
+    .upload(sigPath, sigBuffer, { contentType: 'image/png', upsert: true });
 
   if (sigUploadError) {
     return NextResponse.json(
@@ -68,24 +73,51 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // d. Upload photo to Supabase Storage
-  const photoArrayBuffer = await photoFile.arrayBuffer();
-  const photoBuffer = Buffer.from(photoArrayBuffer);
-  const photoExt = photoFile.name.split('.').pop() ?? 'jpg';
-  const photoPath = `${dateStr}/${stopId}_photo.${photoExt}`;
+  // d. Upload invoice ticket photo
+  const invoicePhotoArrayBuffer = await effectiveInvoicePhoto.arrayBuffer();
+  const invoicePhotoBuffer = Buffer.from(invoicePhotoArrayBuffer);
+  const invoicePhotoExt = effectiveInvoicePhoto.name.split('.').pop() ?? 'jpg';
+  const invoicePhotoPath = `${dateStr}/${stopId}_invoice.${invoicePhotoExt}`;
 
-  const { error: photoUploadError } = await supabase.storage
+  const { error: invoicePhotoUploadError } = await supabase.storage
     .from('photos')
-    .upload(photoPath, photoBuffer, { contentType: photoFile.type || 'image/jpeg' });
+    .upload(invoicePhotoPath, invoicePhotoBuffer, { contentType: effectiveInvoicePhoto.type || 'image/jpeg', upsert: true });
 
-  if (photoUploadError) {
+  if (invoicePhotoUploadError) {
     return NextResponse.json(
-      { error: `Photo upload failed: ${photoUploadError.message}` },
+      { error: `Invoice photo upload failed: ${invoicePhotoUploadError.message}` },
       { status: 500 }
     );
   }
 
-  // e. Download original invoice PDF if it exists
+  // e. Upload product photos
+  const productPhotoPaths: string[] = [];
+  const productPhotoBuffers: Buffer[] = [];
+  const productPhotoFiles = [productPhoto0, productPhoto1].filter((f): f is File => f !== null);
+
+  for (let i = 0; i < productPhotoFiles.length; i++) {
+    const file = productPhotoFiles[i];
+    const ab = await file.arrayBuffer();
+    const buf = Buffer.from(ab);
+    const ext = file.name.split('.').pop() ?? 'jpg';
+    const path = `${dateStr}/${stopId}_product_${i}.${ext}`;
+
+    const { error: uploadErr } = await supabase.storage
+      .from('photos')
+      .upload(path, buf, { contentType: file.type || 'image/jpeg', upsert: true });
+
+    if (uploadErr) {
+      return NextResponse.json(
+        { error: `Product photo ${i + 1} upload failed: ${uploadErr.message}` },
+        { status: 500 }
+      );
+    }
+
+    productPhotoPaths.push(path);
+    productPhotoBuffers.push(buf);
+  }
+
+  // f. Download original invoice PDF if it exists
   let invoicePdfBytes: Uint8Array | null = null;
   if (invoice.pdf_storage_path) {
     const { data: pdfBlob, error: pdfDownloadError } = await supabase.storage
@@ -98,11 +130,12 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // f. Generate composite POD PDF
+  // g. Generate composite POD PDF
   const podPdfBytes = await generatePodPdf({
     invoicePdf: invoicePdfBytes,
     signatureImage: new Uint8Array(sigBuffer),
-    photoImage: new Uint8Array(photoBuffer),
+    invoicePhotoImage: new Uint8Array(invoicePhotoBuffer),
+    productPhotoImages: productPhotoBuffers.map((b) => new Uint8Array(b)),
     invoiceNumber: invoice.invoice_number,
     customerName: invoice.customer_name ?? 'Unknown',
     driverName: driver.name,
@@ -110,16 +143,15 @@ export async function POST(request: NextRequest) {
     gpsLat: gpsLat ? parseFloat(gpsLat) : null,
     gpsLng: gpsLng ? parseFloat(gpsLng) : null,
     notes: notesInput || null,
-    backorderNotes: backorderNotes || null,
   });
 
-  // g. Upload POD PDF to Supabase Storage
+  // h. Upload POD PDF to Supabase Storage
   const podPath = `${dateStr}/${stopId}_pod.pdf`;
   const podBuffer = Buffer.from(podPdfBytes);
 
   const { error: podUploadError } = await supabase.storage
     .from('pods')
-    .upload(podPath, podBuffer, { contentType: 'application/pdf' });
+    .upload(podPath, podBuffer, { contentType: 'application/pdf', upsert: true });
 
   if (podUploadError) {
     return NextResponse.json(
@@ -128,7 +160,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // h. Upload to Google Drive (non-fatal)
+  // i. Upload to Google Drive (non-fatal)
   let googleDriveFileId: string | null = null;
   try {
     googleDriveFileId = await uploadPodToDrive(
@@ -144,7 +176,7 @@ export async function POST(request: NextRequest) {
     console.error('Drive error details:', errStack);
   }
 
-  // i. Update route_stop record with dwell time calculation
+  // j. Update route_stop record with dwell time calculation
   let dwellSeconds: number | null = null;
   if (stop.arrived_at) {
     dwellSeconds = Math.round((new Date(now).getTime() - new Date(stop.arrived_at).getTime()) / 1000);
@@ -154,7 +186,9 @@ export async function POST(request: NextRequest) {
     .from('route_stops')
     .update({
       signature_storage_path: sigPath,
-      photo_storage_path: photoPath,
+      photo_storage_path: invoicePhotoPath,
+      invoice_photo_storage_path: invoicePhotoPath,
+      product_photo_storage_paths: productPhotoPaths.length > 0 ? productPhotoPaths : null,
       pod_pdf_storage_path: podPath,
       google_drive_file_id: googleDriveFileId,
       status: 'completed',
@@ -163,7 +197,6 @@ export async function POST(request: NextRequest) {
       dwell_seconds: dwellSeconds,
       gps_lat: gpsLat ? parseFloat(gpsLat) : null,
       gps_lng: gpsLng ? parseFloat(gpsLng) : null,
-      backorder_notes: backorderNotes || null,
     })
     .eq('id', stopId);
 
@@ -174,13 +207,13 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // j. Update invoice status to 'delivered'
+  // k. Update invoice status to 'delivered'
   await supabase
     .from('invoices')
     .update({ status: 'delivered' })
     .eq('id', invoice.id);
 
-  // k. Check if all stops in route are completed
+  // l. Check if all stops in route are completed
   const { data: allStops } = await supabase
     .from('route_stops')
     .select('status')
@@ -197,7 +230,7 @@ export async function POST(request: NextRequest) {
       .eq('id', stop.route_id);
   }
 
-  // l. Log activity events
+  // m. Log activity events
   const logBase = {
     driver_id: driver.id,
     driver_name: driver.name,
@@ -215,7 +248,7 @@ export async function POST(request: NextRequest) {
     await logActivity({ ...logBase, event_type: 'route_completed', message: `${driver.name} completed all deliveries for today` });
   }
 
-  // m. Return success
+  // n. Return success
   const filename = `${invoice.invoice_number}.pdf`;
   return NextResponse.json({ success: true, googleDriveFileId, filename, driveError: googleDriveFileId ? null : 'Drive upload failed — check logs' });
 }

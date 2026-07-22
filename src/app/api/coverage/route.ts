@@ -10,7 +10,8 @@ export async function GET() {
     .eq('status', 'completed')
     .not('gps_lat', 'is', null)
     .not('gps_lng', 'is', null)
-    .order('completed_at', { ascending: false });
+    .order('completed_at', { ascending: false })
+    .limit(5000);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

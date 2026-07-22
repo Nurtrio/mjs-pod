@@ -18,12 +18,17 @@ export async function GET(request: NextRequest) {
       signature_storage_path,
       photo_storage_path,
       dwell_seconds,
+      gps_lat,
+      gps_lng,
       backorder_notes,
+      invoice_photo_storage_path,
+      product_photo_storage_paths,
       invoice:invoices(id, invoice_number, customer_name, customer_address),
       route:routes(id, route_date, driver:drivers(id, name))
     `)
     .eq('status', 'completed')
-    .order('completed_at', { ascending: false });
+    .order('completed_at', { ascending: false })
+    .limit(5000);
 
   if (dateFrom) {
     query = query.gte('completed_at', `${dateFrom}T00:00:00`);
@@ -64,6 +69,8 @@ export async function GET(request: NextRequest) {
         photo_storage_path: stop.photo_storage_path,
         backorder_notes: stop.backorder_notes,
         dwell_seconds: stop.dwell_seconds,
+        invoice_photo_storage_path: stop.invoice_photo_storage_path,
+        product_photo_storage_paths: stop.product_photo_storage_paths,
       };
     })
     .filter((row) => {

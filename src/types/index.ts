@@ -11,6 +11,7 @@ export interface Invoice {
   invoice_number: string;
   customer_name: string | null;
   customer_address: string | null;
+  customer_email: string | null;
   pdf_storage_path: string | null;
   ticket_type: 'delivery' | 'pickup';
   status: 'unassigned' | 'assigned' | 'in_progress' | 'delivered';
@@ -38,6 +39,9 @@ export interface RouteStop {
   photo_storage_path: string | null;
   pod_pdf_storage_path: string | null;
   google_drive_file_id: string | null;
+  tracking_token: string | null;
+  invoice_photo_storage_path: string | null;
+  product_photo_storage_paths: string[] | null;
   completed_at: string | null;
   arrived_at: string | null;
   departed_at: string | null;

@@ -14,6 +14,8 @@ interface ArchiveRow {
   photo_storage_path: string | null;
   backorder_notes: string | null;
   dwell_seconds: number | null;
+  invoice_photo_storage_path: string | null;
+  product_photo_storage_paths: string[] | null;
 }
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -36,7 +38,8 @@ export default function ArchivePage() {
   const [dateTo, setDateTo] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
-  const [podViewer, setPodViewer] = useState<{ url: string; customer: string; invoice: string } | null>(null);
+  const [podViewer, setPodViewer] = useState<{ url: string; customer: string; invoice: string; ticketPhotoUrl: string | null } | null>(null);
+  const [photoViewer, setPhotoViewer] = useState<{ url: string; customer: string; invoice: string } | null>(null);
 
   const fetchArchive = useCallback(async () => {
     setLoading(true);
@@ -619,6 +622,7 @@ export default function ArchivePage() {
                             url: `${SUPABASE_URL}/storage/v1/object/public/pods/${row.pod_pdf_storage_path}`,
                             customer: row.customer_name || 'Unknown',
                             invoice: row.invoice_number,
+                            ticketPhotoUrl: row.invoice_photo_storage_path ? `${SUPABASE_URL}/storage/v1/object/public/photos/${row.invoice_photo_storage_path}` : null,
                           })}
                           style={{
                             display: 'inline-flex',
@@ -724,6 +728,32 @@ export default function ArchivePage() {
                 </p>
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
+                {podViewer.ticketPhotoUrl && (
+                  <button
+                    onClick={() => {
+                      setPhotoViewer({
+                        url: podViewer.ticketPhotoUrl!,
+                        customer: podViewer.customer,
+                        invoice: podViewer.invoice,
+                      });
+                      setPodViewer(null);
+                    }}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      padding: '8px 14px', borderRadius: 10, fontSize: 13, fontWeight: 600,
+                      color: '#ff9500', background: 'rgba(255,149,0,0.08)',
+                      textDecoration: 'none', border: 'none', cursor: 'pointer',
+                      fontFamily: 'inherit',
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ff9500" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                      <circle cx="8.5" cy="8.5" r="1.5" />
+                      <polyline points="21 15 16 10 5 21" />
+                    </svg>
+                    Ticket
+                  </button>
+                )}
                 <a
                   href={podViewer.url}
                   target="_blank"
@@ -761,6 +791,85 @@ export default function ArchivePage() {
                 src={podViewer.url}
                 style={{ width: '100%', height: '100%', border: 'none' }}
                 title="Proof of Delivery PDF"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Invoice Ticket Photo Viewer Modal */}
+      {photoViewer && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 9999,
+            background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            animation: 'podFadeIn 0.2s ease-out',
+          }}
+          onClick={() => setPhotoViewer(null)}
+        >
+          <div
+            style={{
+              background: '#fff', borderRadius: 20, overflow: 'hidden',
+              width: '90%', maxWidth: 600, maxHeight: '85vh',
+              display: 'flex', flexDirection: 'column',
+              boxShadow: '0 24px 80px rgba(0,0,0,0.3)',
+              animation: 'podSlideUp 0.25s ease-out',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{
+              padding: '16px 20px', borderBottom: '1px solid #eee',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              flexShrink: 0,
+            }}>
+              <div>
+                <p style={{ fontSize: 16, fontWeight: 700, color: '#1a1a1a', margin: 0 }}>
+                  Invoice Ticket Photo
+                </p>
+                <p style={{ fontSize: 13, color: '#666', margin: 0, marginTop: 2 }}>
+                  {photoViewer.customer} · INV #{photoViewer.invoice}
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <a
+                  href={photoViewer.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    padding: '8px 14px', borderRadius: 10, fontSize: 13, fontWeight: 600,
+                    color: '#ff9500', background: 'rgba(255,149,0,0.08)',
+                    textDecoration: 'none', border: 'none', cursor: 'pointer',
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ff9500" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  Open
+                </a>
+                <button
+                  onClick={() => setPhotoViewer(null)}
+                  style={{
+                    width: 36, height: 36, borderRadius: 10, border: 'none',
+                    background: 'rgba(0,0,0,0.05)', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 18, color: '#666',
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            {/* Photo */}
+            <div style={{ flex: 1, background: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, overflow: 'auto' }}>
+              <img
+                src={photoViewer.url}
+                alt={`Invoice ticket for ${photoViewer.customer}`}
+                style={{ maxWidth: '100%', maxHeight: '70vh', borderRadius: 12, objectFit: 'contain' }}
               />
             </div>
           </div>
